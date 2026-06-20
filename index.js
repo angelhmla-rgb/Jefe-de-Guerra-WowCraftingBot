@@ -1,119 +1,146 @@
-import axios from 'axios';
-import pkg from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal';
-
-const { Client, LocalAuth } = pkg;
-
-// Credenciales de entorno
-const CLIENT_ID = process.env.BLIZZARD_CLIENT_ID;
-const CLIENT_SECRET = process.env.BLIZZARD_CLIENT_SECRET;
-const REGION = process.env.BLIZZARD_REGION || 'us'; 
-const LOCALE = 'es_MX';
-
-// 1. FUNCIÓN: Obtener Token de Blizzard
-async function getBlizzardAccessToken() {
-    const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-    try {
-        const response = await axios.post(`https://oauth.battle.net/token`, 
-            'grant_type=client_credentials', 
-            {
-                headers: {
-                    'Authorization': `Basic ${credentials}`,
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
-            }
-        );
-        return response.data.access_token;
-    } catch (error) {
-        console.error('Error en Token de Blizzard:', error.message);
-        throw error;
-    }
+      [Symbol(kCapture)]: false,
+      [Symbol(kHeaders)]: [Object],
+      [Symbol(kHeadersCount)]: 20,
+      [Symbol(kTrailers)]: null,
+      [Symbol(kTrailersCount)]: 0
+    },
+    aborted: false,
+    timeoutCb: null,
+    upgradeOrConnect: false,
+    parser: null,
+    maxHeadersCount: null,
+    reusedSocket: false,
+    host: 'us.api.blizzard.com',
+    protocol: 'https:',
+    _redirectable: Writable {
+      _writableState: [WritableState],
+      _events: [Object: null prototype],
+      _eventsCount: 4,
+      _maxListeners: undefined,
+      _options: [Object],
+      _ended: true,
+      _requestBodyLength: 0,
+      _requestBodyBuffers: [],
+      _onNativeResponse: [Function (anonymous)],
+      _headerFilter: /^(?:Authorization|Proxy-Authorization|Cookie)$/i,
+      _currentRequest: [Circular *1],
+      _currentUrl: 'https://us.api.blizzard.com/data/wow/search/recipe?namespace=static-us&locale=es_MX&access_token=USuvB0NZlS66NC7XCMjq836zN5vjKH4lwI&name.es_MX=Frasco+de+poder+aislado&_page=1&_pageSize=1',
+      _timeout: null,
+      [Symbol(kCapture)]: false
+    },
+    [Symbol(kCapture)]: false,
+    [Symbol(kBytesWritten)]: 0,
+    [Symbol(kNeedDrain)]: false,
+    [Symbol(corked)]: 0,
+    [Symbol(kOutHeaders)]: [Object: null prototype] {
+      accept: [Array],
+      'user-agent': [Array],
+      'accept-encoding': [Array],
+      host: [Array]
+    },
+    [Symbol(errored)]: null,
+    [Symbol(kHighWaterMark)]: 16384,
+    [Symbol(kRejectNonStandardBodyWrites)]: false,
+    [Symbol(kUniqueHeaders)]: null
+  },
+  response: {
+      'x-trace-spanid': '18b9fcd3-1850-c342-60a0-beb281ff57c6',
+      validateStatus: [Function: validateStatus],
+      'x-trace-parentspanid': '18b9fcd3-1850-c312-60a0-beb281ff57c6',
+      transformResponse: [Array],
+    status: 404,
+    statusText: 'Not Found',
+      'x-frame-options': 'SAMEORIGIN',
+      timeout: 0,
+      'x-content-type-options': 'nosniff',
+    headers: Object [AxiosHeaders] {
+      server: 'blizzard'
+      date: 'Sat, 20 Jun 2026 08:56:18 GMT',
+    config: [Object: null prototype] {
+      connection: 'keep-alive',
+    },
+      'content-length': '0',
+      transitional: [Object],
+      'x-trace-traceid': '382ecf2d-e2d3-3b7b-b7a6-16482d7967e1',
+      maxContentLength: -1,
+      traceparent: '00-343a7531e43a7b5065cecbdef5f09cd7-7b00f8336b55300a-01',
+      maxBodyLength: -1,
+      adapter: [Array],
+      xsrfCookieName: 'XSRF-TOKEN',
+      env: [Object],
+      transformRequest: [Array],
+      xsrfHeaderName: 'X-XSRF-TOKEN',
+      _events: [Object: null prototype],
+      allowAbsoluteUrls: true,
+      _maxListeners: undefined,
+      headers: [Object [AxiosHeaders]],
+      destroyed: true,
+      _eventsCount: 7,
+      params: [Object],
+      outputData: [],
+      data: undefined
+      outputSize: 0,
+      method: 'get',
+    },
+      writable: true,
+      _last: true,
+      url: 'https://us.api.blizzard.com/data/wow/search/recipe',
+    request: <ref *1> ClientRequest {
+      chunkedEncoding: false,
+      shouldKeepAlive: true,
+      maxRequestsOnConnectionReached: false,
+      _defaultKeepAlive: true,
+      useChunkedEncodingByDefault: false,
+      sendDate: false,
+      _removedConnection: false,
+      _removedContLen: false,
+      _removedTE: false,
+      strictContentLength: false,
+      _contentLength: 0,
+      _hasBody: true,
+      joinDuplicateHeaders: undefined,
+      path: '/data/wow/search/recipe?namespace=static-us&locale=es_MX&access_token=USuvB0NZlS66NC7XCMjq836zN5vjKH4lwI&name.es_MX=Frasco+de+poder+aislado&_page=1&_pageSize=1',
+      _ended: true,
+      res: [IncomingMessage],
+      aborted: false,
+      _trailer: '',
+      finished: true,
+      _headerSent: true,
+      _closed: true,
+      socket: [TLSSocket],
+      _header: 'GET /data/wow/search/recipe?namespace=static-us&locale=es_MX&access_token=USuvB0NZlS66NC7XCMjq836zN5vjKH4lwI&name.es_MX=Frasco+de+poder+aislado&_page=1&_pageSize=1 HTTP/1.1\r\n' +
+        'Accept: application/json, text/plain, */*\r\n' +
+        'User-Agent: axios/1.18.0\r\n' +
+        'Accept-Encoding: gzip, compress, deflate, br\r\n' +
+        'Host: us.api.blizzard.com\r\n' +
+        'Connection: keep-alive\r\n' +
+        '\r\n',
+      _keepAliveTimeout: 0,
+      _onPendingData: [Function: nop],
+      agent: [Agent],
+      socketPath: undefined,
+      method: 'GET',
+      maxHeaderSize: undefined,
+      insecureHTTPParser: false,
 }
-
-// 2. FUNCIÓN: Buscar receta por NOMBRE y luego traer materiales
-async function getRecipeByNameText(recipeName) {
-    try {
-        const token = await getBlizzardAccessToken();
-        
-        // Buscamos el ID de la receta usando el Search API de Blizzard
-        const searchUrl = `https://${REGION}.api.blizzard.com/data/wow/search/recipe`;
-        const searchResponse = await axios.get(searchUrl, {
-            params: {
-                namespace: `static-${REGION}`,
-                locale: LOCALE,
-                access_token: token,
-                'name.es_MX': recipeName, // Búsqueda exacta o parcial por nombre
-                _page: 1,
-                _pageSize: 1
-            }
-        });
-
-        const results = searchResponse.data.results;
-        if (!results || results.length === 0) {
-            return `❌ No encontré ninguna receta que se llame "${recipeName}" en los archivos de Blizzard.`;
-        }
-
-        // Teniendo el ID del primer resultado, consultamos sus materiales directos
-        const recipeId = results[0].data.id;
-        const recipeUrl = `https://${REGION}.api.blizzard.com/data/wow/recipe/${recipeId}`;
-        const recipeResponse = await axios.get(recipeUrl, {
-            params: { namespace: `static-${REGION}`, locale: LOCALE, access_token: token }
-        });
-
-        const recipe = recipeResponse.data;
-        let mensaje = `🛠️ *Receta encontrada: ${recipe.name}*\n`;
-        if (recipe.description) mensaje += `_${recipe.description}_\n`;
-        mensaje += `\n*Materiales Requeridos:*\n`;
-        
-        if (!recipe.reagents || recipe.reagents.length === 0) {
-            mensaje += `• _Esta receta no requiere materiales consumibles o es una habilidad._\n`;
-        } else {
-            recipe.reagents.forEach(reagent => {
-                mensaje += `• ${reagent.quantity}x ${reagent.reagent.name}\n`;
-            });
-        }
-
-        return mensaje;
-
-    } catch (error) {
-        console.error(error);
-        return `❌ Hubo un error al conectar con Blizzard. Inténtalo de nuevo.`;
-    }
-}
-
-// 3. INICIALIZAR BOT DE WHATSAPP
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }
-});
-
-client.on('qr', (qr) => {
-    console.log('--- NUEVO CÓDIGO QR REQUERIDO ---');
-    qrcode.generate(qr, { small: true });
-});
-
-client.on('ready', () => {
-    console.log('¡El bot de Jefe de Guerra está conectado y escuchando comandos!');
-});
-
-// ESCUCHAR TODOS LOS MENSAJES (PROPIOS Y DE TERCEROS)
-client.on('message_create', async (msg) => {
-    if (msg.body.startsWith('!receta ')) {
-        // Cortamos el texto para sacar solo el nombre de la receta
-        const query = msg.body.substring(8).trim();
-        
-        if (!query) {
-            return msg.reply('⚠️ Escribe el nombre de la receta. Ejemplo: `!receta Frasco de poder aislado`');
-        }
-
-        console.log(`[Bot] Procesando solicitud para: ${query}`);
-        
-        // Obtenemos los materiales por nombre desde Blizzard y respondemos
-        const resultado = await getRecipeByNameText(query);
-        await msg.reply(resultado);
-    }
-});
-
-client.initialize();
+      timeoutCb: null,
+      upgradeOrConnect: false,
+      parser: null,
+      maxHeadersCount: null,
+      reusedSocket: false,
+      host: 'us.api.blizzard.com',
+      protocol: 'https:',
+      _redirectable: [Writable],
+      [Symbol(kCapture)]: false,
+      [Symbol(kBytesWritten)]: 0,
+      [Symbol(kNeedDrain)]: false,
+      [Symbol(corked)]: 0,
+      [Symbol(kOutHeaders)]: [Object: null prototype],
+      [Symbol(errored)]: null,
+      [Symbol(kHighWaterMark)]: 16384,
+      [Symbol(kRejectNonStandardBodyWrites)]: false,
+      [Symbol(kUniqueHeaders)]: null
+    },
+    data: ''
+  },
+  status: 404
