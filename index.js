@@ -30,69 +30,90 @@ async function getBlizzardAccessToken() {
     }
 }
 
-// 2. FUNCIÓN: Obtener texto formateado del crafteo
-async function getRecipeText(recipeId) {
+// 2. FUNCIÓN: Buscar receta por NOMBRE y luego traer materiales
+async function getRecipeByNameText(recipeName) {
     try {
         const token = await getBlizzardAccessToken();
-        const url = `https://${REGION}.api.blizzard.com/data/wow/recipe/${recipeId}`;
-        const response = await axios.get(url, {
+        
+        // Buscamos el ID de la receta usando el Search API de Blizzard
+        const searchUrl = `https://${REGION}.api.blizzard.com/data/wow/search/recipe`;
+        const searchResponse = await axios.get(searchUrl, {
+            params: {
+                namespace: `static-${REGION}`,
+                locale: LOCALE,
+                access_token: token,
+                'name.es_MX': recipeName, // Búsqueda exacta o parcial por nombre
+                _page: 1,
+                _pageSize: 1
+            }
+        });
+
+        const results = searchResponse.data.results;
+        if (!results || results.length === 0) {
+            return `❌ No encontré ninguna receta que se llame "${recipeName}" en los archivos de Blizzard.`;
+        }
+
+        // Teniendo el ID del primer resultado, consultamos sus materiales directos
+        const recipeId = results[0].data.id;
+        const recipeUrl = `https://${REGION}.api.blizzard.com/data/wow/recipe/${recipeId}`;
+        const recipeResponse = await axios.get(recipeUrl, {
             params: { namespace: `static-${REGION}`, locale: LOCALE, access_token: token }
         });
 
-        const recipe = response.data;
-        let mensaje = `🛠️ *Receta WoW: ${recipe.name}*\n`;
+        const recipe = recipeResponse.data;
+        let mensaje = `🛠️ *Receta encontrada: ${recipe.name}*\n`;
         if (recipe.description) mensaje += `_${recipe.description}_\n`;
         mensaje += `\n*Materiales Requeridos:*\n`;
         
-        recipe.reagents.forEach(reagent => {
-            mensaje += `• ${reagent.quantity}x ${reagent.reagent.name}\n`;
-        });
+        if (!recipe.reagents || recipe.reagents.length === 0) {
+            mensaje += `• _Esta receta no requiere materiales consumibles o es una habilidad._\n`;
+        } else {
+            recipe.reagents.forEach(reagent => {
+                mensaje += `• ${reagent.quantity}x ${reagent.reagent.name}\n`;
+            });
+        }
 
         return mensaje;
+
     } catch (error) {
-        return `❌ No encontré la receta con ID o hubo un error en Blizzard.`;
+        console.error(error);
+        return `❌ Hubo un error al conectar con Blizzard. Inténtalo de nuevo.`;
     }
 }
 
 // 3. INICIALIZAR BOT DE WHATSAPP
-// Usamos LocalAuth para que intente guardar la sesión en una carpeta local (.wwebjs_auth)
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] // Obligatorio para entornos como Railway
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
 });
 
-// Mostrar el código QR en la consola/logs de Railway
 client.on('qr', (qr) => {
-    console.log('--- ESCANEA ESTE CÓDIGO QR EN TU WHATSAPP ---');
+    console.log('--- NUEVO CÓDIGO QR REQUERIDO ---');
     qrcode.generate(qr, { small: true });
 });
 
-// Confirmación de conexión exitosa
 client.on('ready', () => {
-    console.log('¡El bot de Jefe de Guerra está conectado a WhatsApp!');
+    console.log('¡El bot de Jefe de Guerra está conectado y escuchando comandos!');
 });
 
-// ESCUCHAR MENSAJES DEL GRUPO
-client.on('message', async (msg) => {
-    // Si alguien escribe en el grupo: !receta <ID_DE_LA_RECETA>
-    // Ejemplo: !receta 40574
+// ESCUCHAR TODOS LOS MENSAJES (PROPIOS Y DE TERCEROS)
+client.on('message_create', async (msg) => {
     if (msg.body.startsWith('!receta ')) {
-        const recipeId = msg.body.split(' ')[1];
+        // Cortamos el texto para sacar solo el nombre de la receta
+        const query = msg.body.substring(8).trim();
         
-        if (!recipeId || isNaN(recipeId)) {
-            return msg.reply('⚠️ Por favor ingresa un ID numérico válido. Ejemplo: `!receta 40574`');
+        if (!query) {
+            return msg.reply('⚠️ Escribe el nombre de la receta. Ejemplo: `!receta Frasco de poder aislado`');
         }
 
-        // Enviamos un mensaje de carga provisional
-        const cargandoMsg = await msg.reply('🔍 Buscando componentes en los archivos de Blizzard...');
+        console.log(`[Bot] Procesando solicitud para: ${query}`);
         
-        // Obtenemos los materiales y respondemos en el chat
-        const resultado = await getRecipeText(recipeId);
+        // Obtenemos los materiales por nombre desde Blizzard y respondemos
+        const resultado = await getRecipeByNameText(query);
         await msg.reply(resultado);
     }
 });
 
 client.initialize();
-
