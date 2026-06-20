@@ -9,70 +9,80 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Mapeando GuildCrafts...");
+    console.log("[Parser] Iniciando lectura lineal de GuildCrafts...");
     RECETAS_DB = {};
-    const mapaIdANombre = {};
-    const regexNombres = /\[(\d+)\]\s*=\s*(?:\{\s*\["name"\]\s*=\s*"([^"]+)"|["']([^"']+)["'])/g;
-    let m;
-    while ((m = regexNombres.exec(lua)) !== null) {
-        const id = m[1];
-        const nom = m[2] || m[3];
-        if (nom && !nom.includes('recipeDB')) mapaIdANombre[id] = nom.trim();
-    }
+    
+    const lineas = lua.split(/\r?\n/);
+    let recetaActual = null;
+    let materiales = [];
+    let artesanos = [];
 
-    const mapaMateriales = {};
-    const mapaArtesanos = {};
-    Object.keys(mapaIdANombre).forEach(id => {
-        mapaMateriales[id] = [];
-        mapaArtesanos[id] = [];
-    });
+    for (let i = 0; i < lineas.length; i++) {
+        const l = lineas[i].trim();
 
-    const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
-    for (let i = 1; i < bloques.length; i += 2) {
-        const id = bloques[i];
-        const cuerpo = bloques[i + 1];
-        if (!cuerpo) continue;
-
-        const lineas = cuerpo.split('\n');
-        let tempMat = null;
-        for (let j = 0; j < lineas.length; j++) {
-            const l = lineas[j];
-            const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-            if (nameM) tempMat = nameM[1].trim();
-
-            const countM = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-            if (countM && tempMat) {
-                if (mapaIdANombre[id] !== tempMat && mapaMateriales[id]) {
-                    mapaMateriales[id].push(`• ${countM[1]}x ${tempMat}`);
+        // Detectar si empieza un nuevo bloque de receta, ej: [12345] = { o ["recipeDB"]
+        if (l.match(/^\[\d+\]\s*=\s*\{/) || l.startsWith('},') || l.startsWith('["professions"]')) {
+            // Guardar la receta anterior si existía
+            if (recetaActual) {
+                const llave = normalizarTexto(recetaActual);
+                if (llave) {
+                    RECETAS_DB[llave] = {
+                        nombreOriginal: recetaActual,
+                        materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se encontraron reactivos._",
+                        artesanos: artesanos.length > 0 ? artesanos.join(", ") : "_Ningún artesano registrado._"
+                    };
                 }
-                tempMat = null;
             }
+            // Resetear contenedores para la nueva receta
+            recetaActual = null;
+            materiales = [];
+            artesanos = [];
+            continue;
+        }
 
-            const playM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
-            if (playM) {
-                const jug = playM[1].trim();
-                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon"];
-                if (!filtrar.includes(jug.toLowerCase()) && jug !== mapaIdANombre[id] && mapaArtesanos[id]) {
-                    if (!mapaArtesanos[id].includes(jug)) mapaArtesanos[id].push(jug);
-                }
+        // 1. Capturar el nombre del ítem principal
+        const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
+        if (nameM && !recetaActual) {
+            const posNombre = nameM[1].trim();
+            if (!posNombre.includes('recipeDB')) {
+                recetaActual = posNombre;
+            }
+            continue;
+        }
+
+        // 2. Capturar materiales internos (De forma directa por línea)
+        if (l.includes('["name"]') && (l.includes('["count"]') || l.includes('["num"]'))) {
+            const mName = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
+            const mCount = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
+            if (mName && mCount && recetaActual !== mName[1].trim()) {
+                materiales.push(`• ${mCount[1]}x ${mName[1].trim()}`);
+            }
+        }
+
+        // 3. Capturar artesanos asignados (Estilo: ["Nombre"] = true)
+        const playM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
+        if (playM && recetaActual) {
+            const jug = playM[1].trim();
+            const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon"];
+            if (!filtrar.includes(jug.toLowerCase()) && jug !== recetaActual) {
+                if (!artesanos.includes(jug)) artesanos.push(jug);
             }
         }
     }
 
-    Object.keys(mapaIdANombre).forEach(id => {
-        const nomOrig = mapaIdANombre[id];
-        const llave = normalizarTexto(nomOrig);
+    // Guardar la última del archivo
+    if (recetaActual) {
+        const llave = normalizarTexto(recetaActual);
         if (llave) {
-            const mats = mapaMateriales[id] || [];
-            const arts = mapaArtesanos[id] || [];
             RECETAS_DB[llave] = {
-                nombreOriginal: nomOrig,
-                materiales: mats.length > 0 ? mats.join("\n") : "• _No se encontraron reactivos._",
-                artesanos: arts.length > 0 ? arts.join(", ") : "_Ningún artesano registrado._"
+                nombreOriginal: recetaActual,
+                materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se encontraron reactivos._",
+                artesanos: artesanos.length > 0 ? artesanos.join(", ") : "_Ningún artesano registrado._"
             };
         }
-    });
-    console.log(`[Parser] Total: ${Object.keys(RECETAS_DB).length}`);
+    }
+
+    console.log(`[Parser] Indexación exitosa. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
@@ -90,7 +100,7 @@ client.on('message_create', async (msg) => {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} elementos).`);
+                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} elementos listos).`);
                 return;
             } catch (err) {
                 await msg.reply(`❌ Error: ${err.message}`);
