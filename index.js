@@ -5,6 +5,15 @@ const { Client, LocalAuth } = pkg;
 
 let RECETAS_DB = {};
 
+// Función auxiliar para quitar acentos y caracteres especiales al comparar
+function normalizarTexto(texto) {
+    return texto
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "") // Quita los acentos
+        .trim();
+}
+
 function parsearLuaGuildCrafts(contenidoLua) {
     console.log("[Parser] Iniciando lectura del archivo GuildCrafts.lua...");
     const lineas = contenidoLua.split(/\r?\n/);
@@ -24,7 +33,7 @@ function parsearLuaGuildCrafts(contenidoLua) {
         
         if (enBloqueRecipeDB && (linea.startsWith('["Jefe de Guerra') || linea.startsWith('["professions"]'))) {
             if (recetaActual) {
-                RECETAS_DB[recetaActual.toLowerCase().trim()] = {
+                RECETAS_DB[normalizarTexto(recetaActual)] = {
                     nombreOriginal: recetaActual,
                     materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
                 };
@@ -35,7 +44,7 @@ function parsearLuaGuildCrafts(contenidoLua) {
         if (enBloqueRecipeDB) {
             if (linea.match(/^\[\d+\]\s*=\s*\{/)) {
                 if (recetaActual) {
-                    RECETAS_DB[recetaActual.toLowerCase().trim()] = {
+                    RECETAS_DB[normalizarTexto(recetaActual)] = {
                         nombreOriginal: recetaActual,
                         materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
                     };
@@ -63,7 +72,7 @@ function parsearLuaGuildCrafts(contenidoLua) {
     }
 
     if (recetaActual) {
-        RECETAS_DB[recetaActual.toLowerCase().trim()] = {
+        RECETAS_DB[normalizarTexto(recetaActual)] = {
             nombreOriginal: recetaActual,
             materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
         };
@@ -81,7 +90,8 @@ client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
 client.on('ready', () => console.log('¡Bot Activo!'));
 
 client.on('message_create', async (msg) => {
-    const texto = msg.body.toLowerCase().trim();
+    const texto = msg.body.trim();
+    const textoLower = texto.toLowerCase();
 
     if (msg.hasMedia && msg.type === 'document') {
         const media = await msg.downloadMedia();
@@ -89,16 +99,16 @@ client.on('message_create', async (msg) => {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} recetas en español).`);
+                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} recetas indexadas sin acentos).`);
                 return;
             } catch (err) {
-                await msg.reply(`❌ Error: ${err.message}`);
+                await msg.reply(`❌ Error al cargar LUA: ${err.message}`);
                 return;
             }
         }
     }
 
-    if (texto === '!lista') {
+    if (textoLower === '!lista') {
         const llaves = Object.keys(RECETAS_DB);
         if (llaves.length === 0) {
             await msg.reply("⚠️ La base de datos está vacía.");
@@ -109,26 +119,39 @@ client.on('message_create', async (msg) => {
         return;
     }
 
-    if (texto.startsWith('!receta ') || texto === '!mangosta') {
-        let busqueda = texto.replace('!receta ', '').trim();
-        if (texto === '!mangosta') busqueda = 'mangosta';
+    if (textoLower.startsWith('!receta ') || textoLower === '!mangosta') {
+        let busqueda = textoLower.replace('!receta ', '').trim();
+        if (textoLower === '!mangosta') busqueda = 'mangosta';
 
         if (Object.keys(RECETAS_DB).length === 0) {
             await msg.reply(`⚠️ La base de datos está vacía. Reenvía el archivo *GuildCrafts.lua*.`);
             return;
         }
 
-        // Búsqueda inteligente por coincidencia parcial en español
-        let encontradaKey = Object.keys(RECETAS_DB).find(k => k.includes(busqueda));
+        const busquedaNormalizada = normalizarTexto(busqueda);
 
-        if (encontradaKey) {
-            const receta = RECETAS_DB[encontradaKey];
+        // Buscar todas las llaves que CONTENGAN el texto buscado
+        let llavesEncontradas = Object.keys(RECETAS_DB).filter(k => k.includes(busquedaNormalizada));
+
+        if (llavesEncontradas.length === 1) {
+            // Caso 1: Una sola coincidencia exacta o parcial
+            const receta = RECETAS_DB[llavesEncontradas[0]];
             let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n`;
             mensaje += `🛠️ *Materiales:*\n${receta.materiales}\n\n`;
-            mensaje += `👥 _Revisa las profesiones de la hermandad en el WoW._`;
+            mensaje += `👥 _Revisa las profesiones de la hermandad._`;
             await msg.reply(mensaje);
+        } else if (llavesEncontradas.length > 1) {
+            // Caso 2: Múltiples recetas contienen esa palabra (ej: "seda" o si hay elíxir y fórmula de mangosta)
+            let mensajeCoincidencias = `🔍 Encontré varias opciones para "${busqueda}". Sé más específico:\n\n`;
+            llavesEncontradas.slice(0, 10).forEach(k => {
+                mensajeCoincidencias += `• \`!receta ${RECETAS_DB[k].nombreOriginal}\`\n`;
+            });
+            if (llavesEncontradas.length > 10) {
+                mensajeCoincidencias += `\n_...y ${llavesEncontradas.length - 10} opciones más._`;
+            }
+            await msg.reply(mensajeCoincidencias);
         } else {
-            await msg.reply(`❌ No encontré ninguna receta que contenga "${busqueda}". Intenta con otra palabra en español (ej: \`!receta plata\` o \`!receta frasco\`).`);
+            await msg.reply(`❌ No encontré ninguna receta que contenga "${busqueda}". ¡Prueba con una palabra clave diferente!`);
         }
     }
 });
