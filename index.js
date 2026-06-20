@@ -18,81 +18,91 @@ function normalizarTexto(texto) {
 function parsearLuaGuildCrafts(contenidoLua) {
     console.log("[Parser] Iniciando lectura del archivo GuildCrafts.lua...");
     
-    // Dividir el archivo por bloques de recetas en lugar de ir línea por línea
-    // Esto nos permite capturar de forma exacta todo lo que pertenece a un objeto.
+    // Dividimos por cada identificador de receta numérico ej: [12345] = {
     const bloques = contenidoLua.split(/\[\d+\]\s*=\s*\{/);
     RECETAS_DB = {};
-
-    console.log(`[Parser] Bloques detectados preliminarmente: ${bloques.length}`);
 
     for (let i = 1; i < bloques.length; i++) {
         const bloque = bloques[i];
 
-        // 1. Extraer el nombre de la receta / item principal
+        // 1. Encontrar el nombre del elemento principal
         const nameMatch = bloque.match(/\["name"\]\s*=\s*"([^"]+)"/);
         if (!nameMatch) continue;
         const nombreReceta = nameMatch[1].trim();
 
-        // 2. Extraer los materiales
-        // Buscamos todas las ocurrencias de materiales dentro de la subestructura del bloque
+        // Evitamos capturar líneas de configuración globales o repetidas
+        if (nombreReceta.includes('recipeDB') || nombreReceta.includes('_recipeDB')) continue;
+
         const materiales = [];
-        const regexMateriales = /\{\s*\["name"\]\s*=\s*"([^"]+)"\s*,\s*\["count"\]\s*=\s*(\d+)/g;
-        let matMatch;
-        
-        while ((matMatch = regexMateriales.exec(bloque)) !== null) {
-            materiales.push(`• ${matMatch[2]}x ${matMatch[1]}`);
-        }
-
-        // Si la regex anterior no pesca por el orden, intentamos una variante común de Lua
-        if (materiales.length === 0) {
-            const regexMaterialesAlt = /\{\s*\["count"\]\s*=\s*(\d+)\s*,\s*\["name"\]\s*=\s*"([^"]+)"/g;
-            while ((matMatch = regexMaterialesAlt.exec(bloque)) !== null) {
-                materiales.push(`• ${matMatch[1]}x ${matMatch[2]}`);
-            }
-        }
-
-        // 3. Extraer los artesanos (Miembros de la hermandad que la conocen)
-        // El addon suele listar los nombres de los jugadores en un bloque llamado ["crafters"] o similar
         const artesanos = [];
-        const regexCrafters = /\["crafters"\]\s*=\s*\{([^}]+)\}/;
-        const craftersBlock = bloque.match(regexCrafters);
-        
-        if (craftersBlock) {
-            // Extrae todos los nombres entre comillas dentro del bloque de crafters
-            const nombresMatch = craftersBlock[1].match(/"([^"]+)"/g);
-            if (nombresMatch) {
-                nombresMatch.forEach(nom => {
-                    artesanos.push(nom.replace(/"/g, '').trim());
-                });
+
+        // 2. Extraer de forma flexible los materiales y sus cantidades
+        // Buscamos cualquier patrón donde se asigne un "name" y un "count" consecutivamente en las líneas
+        const lineasBloque = bloque.split('\n');
+        let tempMatName = null;
+
+        for (let j = 0; j < lineasBloque.length; j++) {
+            const linea = lineasBloque[j];
+
+            // Si encontramos un nombre de material interno
+            const matNameMatch = linea.match(/\["name"\]\s*=\s*"([^"]+)"/);
+            if (matNameMatch) {
+                const encontrado = matNameMatch[1].trim();
+                // Si es diferente al nombre del item principal, es un reactivo
+                if (encontrado !== nombreReceta) {
+                    tempMatName = encontrado;
+                }
+            }
+
+            // Si encontramos la cantidad para ese reactivo
+            const matCountMatch = linea.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
+            if (matCountMatch && tempMatName) {
+                materiales.push(`• ${matCountMatch[1]}x ${tempMatName}`);
+                tempMatName = null; // Reseteamos para el siguiente material
+            }
+
+            // 3. Extraer nombres de artesanos de forma directa
+            // Buscamos líneas que contengan nombres de jugadores asignados dentro del bloque de crafters/players
+            // Normalmente se guardan en listas como ["NombreJugador"] = true o similares
+            const playerMatch = linea.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
+            if (playerMatch) {
+                const posibleJugador = playerMatch[1].trim();
+                // Filtramos palabras clave del addon que no corresponden a jugadores
+                const palabrasFiltro = ["name", "count", "num", "crafters", "players", "recipes", "id", "profession"];
+                if (!palabrasFiltro.includes(posibleJugador.toLowerCase()) && posibleJugador !== nombreReceta) {
+                    if (!artesanos.includes(posibleJugador)) {
+                        artesanos.push(posibleJugador);
+                    }
+                }
             }
         }
 
-        // Si no se encuentra estructura de crafters, buscamos nombres sueltos asignados al ID
+        // Si la extracción línea por línea de artesanos no pescó, intentamos por bloque de texto general
         if (artesanos.length === 0) {
-            const regexJugadoresSueltos = /\["players"\]\s*=\s*\{([^}]+)\}/;
-            const playersBlock = bloque.match(regexJugadoresSueltos);
-            if (playersBlock) {
-                const nombresMatch = playersBlock[1].match(/"([^"]+)"/g);
-                if (nombresMatch) {
-                    nombresMatch.forEach(nom => {
-                        artesanos.push(nom.replace(/"/g, '').trim());
+            const craftersBlock = bloque.match(/(?:crafters|players)\s*=\s*\{([^}]+)\}/i);
+            if (craftersBlock) {
+                const nombresSueltos = craftersBlock[1].match(/"([^"]+)"/g);
+                if (nombresSueltos) {
+                    nombresSueltos.forEach(nom => {
+                        const limpio = nom.replace(/"/g, '').trim();
+                        if (!artesanos.includes(limpio)) artesanos.push(limpio);
                     });
                 }
             }
         }
 
-        // Guardar la receta procesada en nuestra base de datos organizada
+        // Guardar en la base de datos indexada
         const llave = normalizarTexto(nombreReceta);
         if (llave) {
             RECETAS_DB[llave] = {
                 nombreOriginal: nombreReceta,
-                materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se encontraron reactivos específicos en el archivo._",
+                materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se especificaron reactivos en este registro._",
                 artesanos: artesanos.length > 0 ? artesanos.join(", ") : "_Ninguno registrado en el addon aún._"
             };
         }
     }
 
-    console.log(`[Parser] Procesamiento finalizado. Elementos indexados listos: ${Object.keys(RECETAS_DB).length}`);
+    console.log(`[Parser] Procesamiento finalizado. Elementos listos: ${Object.keys(RECETAS_DB).length}`);
 }
 
 const client = new Client({
@@ -104,7 +114,7 @@ client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
 client.on('ready', () => console.log('¡Bot Activo!'));
 
 client.on('message_create', async (msg) => {
-    // 1. REVISAR SI ES EL ARCHIVO LUA
+    // 1. DETECTAR EL ARCHIVO .LUA
     if (msg.hasMedia && msg.type === 'document') {
         const media = await msg.downloadMedia();
         if (media.filename && media.filename.endsWith('.lua')) {
