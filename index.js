@@ -16,93 +16,111 @@ function normalizarTexto(texto) {
 }
 
 function parsearLuaGuildCrafts(contenidoLua) {
-    console.log("[Parser] Iniciando lectura del archivo GuildCrafts.lua...");
-    
-    // Dividimos por cada identificador de receta numérico ej: [12345] = {
-    const bloques = contenidoLua.split(/\[\d+\]\s*=\s*\{/);
+    console.log("[Parser] Iniciando mapeo global de GuildCrafts.lua...");
     RECETAS_DB = {};
 
-    for (let i = 1; i < bloques.length; i++) {
-        const bloque = bloques[i];
+    // 1. Mapear IDs a Nombres de recetas
+    // Busca patrones tipo: [12345] = { ["name"] = "Elixir de la mangosta" ... }
+    // O también estructuras planas como: [12345] = "Elixir de la mangosta"
+    const mapaIdANombre = {};
+    const regexNombres = /\[(\d+)\]\s*=\s*(?:\{\s*\["name"\]\s*=\s*"([^"]+)"|["']([^"']+)["'])/g;
+    let match;
+    
+    while ((match = regexNombres.exec(contenidoLua)) !== null) {
+        const id = match[1];
+        const nombre = match[2] || match[3];
+        if (nombre && !nombre.includes('recipeDB')) {
+            mapaIdANombre[id] = nombre.trim();
+        }
+    }
 
-        // 1. Encontrar el nombre del elemento principal
-        const nameMatch = bloque.match(/\["name"\]\s*=\s*"([^"]+)"/);
-        if (!nameMatch) continue;
-        const nombreReceta = nameMatch[1].trim();
+    // 2. Crear contenedores temporales para ingredientes y creadores por ID
+    const mapaMateriales = {};
+    const mapaArtesanos = {};
 
-        // Evitamos capturar líneas de configuración globales o repetidas
-        if (nombreReceta.includes('recipeDB') || nombreReceta.includes('_recipeDB')) continue;
+    // Inicializar mapas para cada ID detectado
+    Object.keys(mapaIdANombre).forEach(id => {
+        mapaMateriales[id] = [];
+        mapaArtesanos[id] = [];
+    });
 
-        const materiales = [];
-        const artesanos = [];
+    // 3. Extraer sub-bloques del archivo usando una división por bloques numéricos [id] = { ... }
+    const bloques = contenidoLua.split(/\[(\d+)\]\s*=\s*\{/);
+    
+    for (let i = 1; i < bloques.length; i += 2) {
+        const id = bloques[i];
+        const cuerpoBloque = bloques[i + 1];
+        if (!cuerpoBloque) continue;
 
-        // 2. Extraer de forma flexible los materiales y sus cantidades
-        // Buscamos cualquier patrón donde se asigne un "name" y un "count" consecutivamente en las líneas
-        const lineasBloque = bloque.split('\n');
+        // --- Extracción de Materiales en el bloque del ID ---
+        // Busca patrones comunes de materiales del tipo: ["name"] = "Seda", ["count"] = 4
+        const lineas = cuerpoBloque.split('\n');
         let tempMatName = null;
-
-        for (let j = 0; j < lineasBloque.length; j++) {
-            const linea = lineasBloque[j];
-
-            // Si encontramos un nombre de material interno
+        
+        for (let j = 0; j < lineas.length; j++) {
+            const linea = lineas[j];
+            
             const matNameMatch = linea.match(/\["name"\]\s*=\s*"([^"]+)"/);
             if (matNameMatch) {
-                const encontrado = matNameMatch[1].trim();
-                // Si es diferente al nombre del item principal, es un reactivo
-                if (encontrado !== nombreReceta) {
-                    tempMatName = encontrado;
-                }
+                tempMatName = matNameMatch[1].trim();
             }
-
-            // Si encontramos la cantidad para ese reactivo
+            
             const matCountMatch = linea.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
             if (matCountMatch && tempMatName) {
-                materiales.push(`• ${matCountMatch[1]}x ${tempMatName}`);
-                tempMatName = null; // Reseteamos para el siguiente material
+                // Verificar que no se añada a sí mismo como material
+                if (mapaIdANombre[id] !== tempMatName && mapaMateriales[id]) {
+                    mapaMateriales[id].push(`• ${matCountMatch[1]}x ${tempMatName}`);
+                }
+                tempMatName = null;
             }
 
-            // 3. Extraer nombres de artesanos de forma directa
-            // Buscamos líneas que contengan nombres de jugadores asignados dentro del bloque de crafters/players
-            // Normalmente se guardan en listas como ["NombreJugador"] = true o similares
+            // --- Extracción de Artesanos / Jugadores en el bloque ---
+            // Busca claves estilo: ["NombrePersonaje"] = true o ["NombrePersonaje"] = 1
             const playerMatch = linea.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerMatch) {
-                const posibleJugador = playerMatch[1].trim();
-                // Filtramos palabras clave del addon que no corresponden a jugadores
-                const palabrasFiltro = ["name", "count", "num", "crafters", "players", "recipes", "id", "profession"];
-                if (!palabrasFiltro.includes(posibleJugador.toLowerCase()) && posibleJugador !== nombreReceta) {
-                    if (!artesanos.includes(posibleJugador)) {
-                        artesanos.push(posibleJugador);
+                const jugador = playerMatch[1].trim();
+                const ignorarclaves = ["name", "count", "num", "crafters", "players", "recipes", "id", "profession", "icon"];
+                if (!ignorarclaves.includes(jugador.toLowerCase()) && jugador !== mapaIdANombre[id] && mapaArtesanos[id]) {
+                    if (!mapaArtesanos[id].includes(jugador)) {
+                        mapaArtesanos[id].push(jugador);
                     }
                 }
             }
         }
 
-        // Si la extracción línea por línea de artesanos no pescó, intentamos por bloque de texto general
-        if (artesanos.length === 0) {
-            const craftersBlock = bloque.match(/(?:crafters|players)\s*=\s*\{([^}]+)\}/i);
-            if (craftersBlock) {
-                const nombresSueltos = craftersBlock[1].match(/"([^"]+)"/g);
-                if (nombresSueltos) {
-                    nombresSueltos.forEach(nom => {
-                        const limpio = nom.replace(/"/g, '').trim();
-                        if (!artesanos.includes(limpio)) artesanos.push(limpio);
-                    });
-                }
+        // Búsqueda secundaria de bloques compactos tipo crafters = { "PlayerA", "PlayerB" }
+        const craftersBlock = cuerpoBloque.match(/(?:crafters|players)\s*=\s*\{([^}]+)\}/i);
+        if (craftersBlock && mapaArtesanos[id]) {
+            const nombresSueltos = craftersBlock[1].match(/"([^"]+)"/g);
+            if (nombresSueltos) {
+                nombresSueltos.forEach(nom => {
+                    const limpio = nom.replace(/"/g, '').trim();
+                    if (!mapaArtesanos[id].includes(limpio)) {
+                        mapaArtesanos[id].push(limpio);
+                    }
+                });
             }
-        }
-
-        // Guardar en la base de datos indexada
-        const llave = normalizarTexto(nombreReceta);
-        if (llave) {
-            RECETAS_DB[llave] = {
-                nombreOriginal: nombreReceta,
-                materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se especificaron reactivos en este registro._",
-                artesanos: artesanos.length > 0 ? artesanos.join(", ") : "_Ninguno registrado en el addon aún._"
-            };
         }
     }
 
-    console.log(`[Parser] Procesamiento finalizado. Elementos listos: ${Object.keys(RECETAS_DB).length}`);
+    // 4. Consolidar todo en la base de datos de consulta (RECETAS_DB) usando el nombre normalizado
+    Object.keys(mapaIdANombre).forEach(id => {
+        const nombreOriginal = mapaIdANombre[id];
+        const llave = normalizarTexto(nombreOriginal);
+        
+        if (llave) {
+            const mats = mapaMateriales[id] || [];
+            const arts = mapaArtesanos[id] || [];
+
+            RECETAS_DB[llave] = {
+                nombreOriginal: nombreOriginal,
+                materiales: mats.length > 0 ? mats.join("\n") : "• _No se encontraron reactivos en el archivo para este ID._",
+                artesanos: arts.length > 0 ? arts.join(", ") : "_Ningún artesano registrado en el addon todavía._"
+            };
+        }
+    });
+
+    console.log(`[Parser] Indexación completada. Total de recetas legibles: ${Object.keys(RECETAS_DB).length}`);
 }
 
 const client = new Client({
@@ -121,7 +139,7 @@ client.on('message_create', async (msg) => {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(`✅ *¡Base de datos cargada correctamente!* (${Object.keys(RECETAS_DB).length} elementos listos para consultar con materiales y artesanos).`);
+                await msg.reply(`✅ *¡Base de datos cargada perfectamente!* (${Object.keys(RECETAS_DB).length} elementos listos para consultar con sus componentes y artesanos asignados).`);
                 return;
             } catch (err) {
                 await msg.reply(`❌ Error al procesar el archivo LUA: ${err.message}`);
