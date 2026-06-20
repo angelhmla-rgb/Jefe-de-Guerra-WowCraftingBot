@@ -1,118 +1,78 @@
 import pkg from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
-
 const { Client, LocalAuth } = pkg;
 
 let RECETAS_DB = {};
 
-// Quita acentos y caracteres raros para comparar limpiamente
-function normalizarTexto(texto) {
-    return texto
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9 ]/g, "")
-        .trim();
+function normalizarTexto(t) {
+    return t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").trim();
 }
 
-function parsearLuaGuildCrafts(contenidoLua) {
-    console.log("[Parser] Iniciando mapeo global de GuildCrafts.lua...");
+function parsearLuaGuildCrafts(lua) {
+    console.log("[Parser] Mapeando GuildCrafts...");
     RECETAS_DB = {};
-
-    // 1. Mapear IDs a Nombres de recetas
     const mapaIdANombre = {};
     const regexNombres = /\[(\d+)\]\s*=\s*(?:\{\s*\["name"\]\s*=\s*"([^"]+)"|["']([^"']+)["'])/g;
-    let match;
-    
-    while ((match = regexNombres.exec(contenidoLua)) !== null) {
-        const id = match[1];
-        const nombre = match[2] || match[3];
-        if (nombre && !nombre.includes('recipeDB')) {
-            mapaIdANombre[id] = nombre.trim();
-        }
+    let m;
+    while ((m = regexNombres.exec(lua)) !== null) {
+        const id = m[1];
+        const nom = m[2] || m[3];
+        if (nom && !nom.includes('recipeDB')) mapaIdANombre[id] = nom.trim();
     }
 
-    // 2. Crear contenedores temporales para ingredientes y creadores por ID
     const mapaMateriales = {};
     const mapaArtesanos = {};
-
-    // Inicializar mapas para cada ID detectado
     Object.keys(mapaIdANombre).forEach(id => {
         mapaMateriales[id] = [];
         mapaArtesanos[id] = [];
     });
 
-    // 3. Extraer sub-bloques del archivo usando una división por bloques numéricos [id] = { ... }
-    const bloques = contenidoLua.split(/\[(\d+)\]\s*=\s*\{/);
-    
+    const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
     for (let i = 1; i < bloques.length; i += 2) {
         const id = bloques[i];
-        const cuerpoBloque = bloques[i + 1];
-        if (!cuerpoBloque) continue;
+        const cuerpo = bloques[i + 1];
+        if (!cuerpo) continue;
 
-        const lineas = cuerpoBloque.split('\n');
-        let tempMatName = null;
-        
+        const lineas = cuerpo.split('\n');
+        let tempMat = null;
         for (let j = 0; j < lineas.length; j++) {
-            const linea = lineas[j];
-            
-            const matNameMatch = linea.match(/\["name"\]\s*=\s*"([^"]+)"/);
-            if (matNameMatch) {
-                tempMatName = matNameMatch[1].trim();
-            }
-            
-            const matCountMatch = linea.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-            if (matCountMatch && tempMatName) {
-                if (mapaIdANombre[id] !== tempMatName && mapaMateriales[id]) {
-                    mapaMateriales[id].push(`• ${matCountMatch[1]}x ${tempMatName}`);
+            const l = lineas[j];
+            const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
+            if (nameM) tempMat = nameM[1].trim();
+
+            const countM = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
+            if (countM && tempMat) {
+                if (mapaIdANombre[id] !== tempMat && mapaMateriales[id]) {
+                    mapaMateriales[id].push(`• ${countM[1]}x ${tempMat}`);
                 }
-                tempMatName = null;
+                tempMat = null;
             }
 
-            const playerMatch = linea.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
-            if (playerMatch) {
-                const jugador = playerMatch[1].trim();
-                const ignorarclaves = ["name", "count", "num", "crafters", "players", "recipes", "id", "profession", "icon"];
-                if (!ignorarclaves.includes(jugador.toLowerCase()) && jugador !== mapaIdANombre[id] && mapaArtesanos[id]) {
-                    if (!mapaArtesanos[id].includes(jugador)) {
-                        mapaArtesanos[id].push(jugador);
-                    }
+            const playM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
+            if (playM) {
+                const jug = playM[1].trim();
+                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon"];
+                if (!filtrar.includes(jug.toLowerCase()) && jug !== mapaIdANombre[id] && mapaArtesanos[id]) {
+                    if (!mapaArtesanos[id].includes(jug)) mapaArtesanos[id].push(jug);
                 }
-            }
-        }
-
-        const craftersBlock = cuerpoBloque.match(/(?:crafters|players)\s*=\s*\{([^}]+)\}/i);
-        if (craftersBlock && mapaArtesanos[id]) {
-            const nombresSueltos = craftersBlock[1].match(/"([^"]+)"/g);
-            if (nombresSueltos) {
-                nombresSueltos.forEach(nom => {
-                    const limpio = nom.replace(/"/g, '').trim();
-                    if (!mapaArtesanos[id].includes(limpio)) {
-                        mapaArtesanos[id].push(limpio);
-                    }
-                });
             }
         }
     }
 
-    // 4. Consolidar todo en la base de datos de consulta (RECETAS_DB) usando el nombre normalizado
     Object.keys(mapaIdANombre).forEach(id => {
-        const nombreOriginal = mapaIdANombre[id];
-        const llave = normalizarTexto(nombreOriginal);
-        
+        const nomOrig = mapaIdANombre[id];
+        const llave = normalizarTexto(nomOrig);
         if (llave) {
             const mats = mapaMateriales[id] || [];
             const arts = mapaArtesanos[id] || [];
-
             RECETAS_DB[llave] = {
-                nombreOriginal: nombreOriginal,
-                materiales: mats.length > 0 ? mats.join("\n") : "• _No se encontraron reactivos en el archivo para este ID._",
-                artesanos: arts.length > 0 ? arts.join(", ") : "_Ningún artesano registrado en el addon todavía._"
+                nombreOriginal: nomOrig,
+                materiales: mats.length > 0 ? mats.join("\n") : "• _No se encontraron reactivos._",
+                artesanos: arts.length > 0 ? arts.join(", ") : "_Ningún artesano registrado._"
             };
         }
     });
-
-    console.log(`[Parser] Indexación completada. Total de recetas legibles: ${Object.keys(RECETAS_DB).length}`);
+    console.log(`[Parser] Total: ${Object.keys(RECETAS_DB).length}`);
 }
 
 const client = new Client({
@@ -124,50 +84,41 @@ client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
 client.on('ready', () => console.log('¡Bot Activo!'));
 
 client.on('message_create', async (msg) => {
-    // 1. DETECTAR EL ARCHIVO .LUA
     if (msg.hasMedia && msg.type === 'document') {
         const media = await msg.downloadMedia();
         if (media.filename && media.filename.endsWith('.lua')) {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(`✅ *¡Base de datos cargada perfectamente!* (${Object.keys(RECETAS_DB).length} elementos listos para consultar con sus componentes y artesanos asignados).`);
+                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} elementos).`);
                 return;
             } catch (err) {
-                await msg.reply(`❌ Error al procesar el archivo LUA: ${err.message}`);
+                await msg.reply(`❌ Error: ${err.message}`);
                 return;
             }
         }
     }
 
-    // 2. PROCESAR COMANDOS
     let textoOriginal = msg.body.trim();
     let textoLower = textoOriginal.toLowerCase();
     
     if (textoLower.startsWith('!receta ')) {
         textoOriginal = textoOriginal.substring(8).trim();
-        textoLower = textoOriginal.toLowerCase();
     } else if (textoLower.startsWith('!')) {
         textoOriginal = textoOriginal.substring(1).trim();
-        textoLower = textoOriginal.toLowerCase();
     } else {
         return; 
     }
 
-    if (textoLower === 'lista') {
+    if (textoOriginal.toLowerCase() === 'lista') {
         const llaves = Object.keys(RECETAS_DB);
-        if (llaves.length === 0) {
-            await msg.reply("⚠️ La base de datos está vacía.");
-            return;
-        }
+        if (llaves.length === 0) return msg.reply("⚠️ Base de datos vacía.");
         const muestra = llaves.slice(0, 30).map(k => `• ${RECETAS_DB[k].nombreOriginal}`).join("\n");
-        await msg.reply(`📋 *Muestra de elementos (Primeras 30):*\n\n${muestra}`);
-        return;
+        return msg.reply(`📋 *Muestra (Primeras 30):*\n\n${muestra}`);
     }
 
     if (Object.keys(RECETAS_DB).length === 0) {
-        await msg.reply(`⚠️ La base de datos está vacía. Por favor, reenvía el archivo *GuildCrafts.lua*.`);
-        return;
+        return msg.reply(`⚠️ Reenvía el archivo *GuildCrafts.lua*.`);
     }
 
     const busquedaNormalizada = normalizarTexto(textoOriginal);
@@ -175,21 +126,15 @@ client.on('message_create', async (msg) => {
 
     if (llavesEncontradas.length === 1) {
         const receta = RECETAS_DB[llavesEncontradas[0]];
-        let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n`;
-        mensaje += `🛠️ *Materiales Necesarios:*\n${receta.materiales}\n\n`;
-        mensaje += `👥 *Artesanos que pueden craftearlo:*\n${receta.artesanos}`;
+        let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n🛠️ *Materiales:*\n${receta.materiales}\n\n👥 *Artesanos:*\n${receta.artesanos}`;
         await msg.reply(mensaje);
     } else if (llavesEncontradas.length > 1) {
-        let mensajeCoincidencias = `🔍 Encontré varias opciones para "${textoOriginal}":\n\n`;
-        llavesEncontradas.slice(0, 15).forEach(k => {
-            mensajeCoincidencias += `• \`!${RECETAS_DB[k].nombreOriginal}\`\n`;
-        });
-        if (llavesEncontradas.length > 15) {
-            mensajeCoincidencias += `\n_...y ${llavesEncontradas.length - 15} opciones más._`;
-        }
-        await msg.reply(mensajeCoincidencias);
+        let mCoincide = `🔍 Opciones para "${textoOriginal}":\n\n`;
+        llavesEncontradas.slice(0, 15).forEach(k => { mCoincide += `• \`!${RECETAS_DB[k].nombreOriginal}\`\n`; });
+        if (llavesEncontradas.length > 15) mCoincide += `\n_...y ${llavesEncontradas.length - 15} más._`;
+        await msg.reply(mCoincide);
     } else {
-        await msg.reply(`❌ No encontré ningún elemento que coincida con "${textoOriginal}".`);
+        await msg.reply(`❌ No encontré "${textoOriginal}".`);
     }
 });
 
