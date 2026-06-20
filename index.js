@@ -30,58 +30,72 @@ async function getBlizzardAccessToken() {
     }
 }
 
-// 2. FUNCIÓN: Buscar receta por NOMBRE y luego traer materiales
-async function getRecipeByNameText(recipeName) {
+// 2. FUNCIÓN PRINCIPAL: Obtener datos de la Receta por ID
+async function fetchRecipeById(recipeId, token) {
+    const recipeUrl = `https://${REGION}.api.blizzard.com/data/wow/recipe/${recipeId}`;
+    const response = await axios.get(recipeUrl, {
+        params: { namespace: `static-${REGION}`, locale: LOCALE, access_token: token }
+    });
+    
+    const recipe = response.data;
+    let mensaje = `🛠️ *Receta encontrada: ${recipe.name}* (ID: ${recipeId})\n`;
+    if (recipe.description) mensaje += `_${recipe.description}_\n`;
+    mensaje += `\n*Materiales Requeridos:*\n`;
+    
+    if (!recipe.reagents || recipe.reagents.length === 0) {
+        mensaje += `• _Esta receta no requiere materiales consumibles._\n`;
+    } else {
+        recipe.reagents.forEach(reagent => {
+            mensaje += `• ${reagent.quantity}x ${reagent.reagent.name}\n`;
+        });
+    }
+    return mensaje;
+}
+
+// 3. FUNCIÓN: Procesador de Comandos
+async function processRecipeRequest(userInput) {
     try {
         const token = await getBlizzardAccessToken();
-        
-        // Buscamos el ID de la receta usando el Search API de Blizzard
+        const cleanInput = userInput.trim();
+
+        // CASO A: El usuario escribió un ID numérico directo
+        if (/^\d+$/.test(cleanInput)) {
+            return await fetchRecipeById(cleanInput, token);
+        }
+
+        // CASO B: El usuario escribió texto (Buscador flexible)
         const searchUrl = `https://${REGION}.api.blizzard.com/data/wow/search/recipe`;
         const searchResponse = await axios.get(searchUrl, {
             params: {
                 namespace: `static-${REGION}`,
                 locale: LOCALE,
                 access_token: token,
-                'name.es_MX': recipeName, // Búsqueda exacta o parcial por nombre
+                'name.es_MX': cleanInput,
                 _page: 1,
-                _pageSize: 1
+                _pageSize: 3 // Revisamos hasta 3 opciones
             }
         });
 
         const results = searchResponse.data.results;
-        if (!results || results.length === 0) {
-            return `❌ No encontré ninguna receta que se llame "${recipeName}" en los archivos de Blizzard.`;
-        }
-
-        // Teniendo el ID del primer resultado, consultamos sus materiales directos
-        const recipeId = results[0].data.id;
-        const recipeUrl = `https://${REGION}.api.blizzard.com/data/wow/recipe/${recipeId}`;
-        const recipeResponse = await axios.get(recipeUrl, {
-            params: { namespace: `static-${REGION}`, locale: LOCALE, access_token: token }
-        });
-
-        const recipe = recipeResponse.data;
-        let mensaje = `🛠️ *Receta encontrada: ${recipe.name}*\n`;
-        if (recipe.description) mensaje += `_${recipe.description}_\n`;
-        mensaje += `\n*Materiales Requeridos:*\n`;
         
-        if (!recipe.reagents || recipe.reagents.length === 0) {
-            mensaje += `• _Esta receta no requiere materiales consumibles o es una habilidad._\n`;
-        } else {
-            recipe.reagents.forEach(reagent => {
-                mensaje += `• ${reagent.quantity}x ${reagent.reagent.name}\n`;
-            });
+        if (!results || results.length === 0) {
+            return `❌ No encontré recetas con "${cleanInput}".\n\n💡 *Tip:* Si la búsqueda falla por el nombre, puedes usar el ID numérico de Wowhead. Ejemplo:\n\`!receta 375743\``;
         }
 
-        return mensaje;
+        // Tomamos la primera coincidencia encontrada en la búsqueda
+        const recipeId = results[0].data.id;
+        return await fetchRecipeById(recipeId, token);
 
     } catch (error) {
-        console.error(error);
-        return `❌ Hubo un error al conectar con Blizzard. Inténtalo de nuevo.`;
+        if (error.response?.status === 404) {
+            return `❌ No se encontró ninguna receta con esos datos en la base de datos de WoW.`;
+        }
+        console.error('Error en el proceso:', error.message);
+        return `❌ Hubo un error al procesar la receta con Blizzard.`;
     }
 }
 
-// 3. INICIALIZAR BOT DE WHATSAPP
+// 4. INICIALIZAR BOT DE WHATSAPP
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -98,20 +112,17 @@ client.on('ready', () => {
     console.log('¡El bot de Jefe de Guerra está conectado y escuchando comandos!');
 });
 
-// ESCUCHAR TODOS LOS MENSAJES (PROPIOS Y DE TERCEROS)
+// ESCUCHAR COMANDOS
 client.on('message_create', async (msg) => {
     if (msg.body.startsWith('!receta ')) {
-        // Cortamos el texto para sacar solo el nombre de la receta
         const query = msg.body.substring(8).trim();
         
         if (!query) {
-            return msg.reply('⚠️ Escribe el nombre de la receta. Ejemplo: `!receta Frasco de poder aislado`');
+            return msg.reply('⚠️ Escribe el nombre o ID de la receta. Ejemplo: `!receta 375743` o `!receta Frasco`');
         }
 
-        console.log(`[Bot] Procesando solicitud para: ${query}`);
-        
-        // Obtenemos los materiales por nombre desde Blizzard y respondemos
-        const resultado = await getRecipeByNameText(query);
+        console.log(`[Bot] Procesando comando para: ${query}`);
+        const resultado = await processRecipeRequest(query);
         await msg.reply(resultado);
     }
 });
