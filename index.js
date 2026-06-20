@@ -5,15 +5,6 @@ const { Client, LocalAuth } = pkg;
 
 let RECETAS_DB = {};
 
-const TRADUCCIONES = {
-    'mangosta': 'mongoose',
-    'gato': 'cat',
-    'fuerza': 'strength',
-    'agility': 'agility',
-    'bolsa': 'bag',
-    'tela': 'cloth'
-};
-
 function parsearLuaGuildCrafts(contenidoLua) {
     console.log("[Parser] Iniciando lectura del archivo GuildCrafts.lua...");
     const lineas = contenidoLua.split(/\r?\n/);
@@ -98,7 +89,7 @@ client.on('message_create', async (msg) => {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} recetas).`);
+                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} recetas en español).`);
                 return;
             } catch (err) {
                 await msg.reply(`❌ Error: ${err.message}`);
@@ -107,15 +98,14 @@ client.on('message_create', async (msg) => {
         }
     }
 
-    // COMANDO DE DIAGNÓSTICO
     if (texto === '!lista') {
         const llaves = Object.keys(RECETAS_DB);
         if (llaves.length === 0) {
-            await msg.reply("⚠️ La base de datos está vacía en este momento.");
+            await msg.reply("⚠️ La base de datos está vacía.");
             return;
         }
         const muestra = llaves.slice(0, 30).map(k => `• ${RECETAS_DB[k].nombreOriginal}`).join("\n");
-        await msg.reply(`📋 *Muestra de recetas en memoria (Primeras 30):*\n\n${muestra}`);
+        await msg.reply(`📋 *Muestra de recetas (Primeras 30):*\n\n${muestra}`);
         return;
     }
 
@@ -128,19 +118,17 @@ client.on('message_create', async (msg) => {
             return;
         }
 
-        const terminoIngles = TRADUCCIONES[busqueda] || busqueda;
-
-        // Búsqueda más flexible e inteligente (verifica si está contenido)
-        let encontradaKey = Object.keys(RECETAS_DB).find(k => k.includes(busqueda) || k.includes(terminoIngles));
+        // Búsqueda inteligente por coincidencia parcial en español
+        let encontradaKey = Object.keys(RECETAS_DB).find(k => k.includes(busqueda));
 
         if (encontradaKey) {
             const receta = RECETAS_DB[encontradaKey];
             let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n`;
             mensaje += `🛠️ *Materiales:*\n${receta.materiales}\n\n`;
-            mensaje += `👥 _Revisa las profesiones en la guild._`;
+            mensaje += `👥 _Revisa las profesiones de la hermandad en el WoW._`;
             await msg.reply(mensaje);
         } else {
-            await msg.reply(`❌ No encontré "${busqueda}" o "${terminoIngles}".\n\n💡 Tip: Escribe *!lista* para ver qué nombres guardó el bot.`);
+            await msg.reply(`❌ No encontré ninguna receta que contenga "${busqueda}". Intenta con otra palabra en español (ej: \`!receta plata\` o \`!receta frasco\`).`);
         }
     }
 });
