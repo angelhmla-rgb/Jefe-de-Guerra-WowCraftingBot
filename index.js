@@ -7,7 +7,6 @@ const { Client, LocalAuth } = pkg;
 const CLIENT_ID = process.env.BLIZZARD_CLIENT_ID;
 const CLIENT_SECRET = process.env.BLIZZARD_CLIENT_SECRET;
 const REGION = process.env.BLIZZARD_REGION || 'us'; 
-const LOCALE = 'es_MX';
 
 // 1. FUNCIÓN: Obtener Token
 async function getBlizzardAccessToken() {
@@ -29,41 +28,48 @@ async function getBlizzardAccessToken() {
     }
 }
 
-// 2. FUNCIÓN: Consultar API de Blizzard con namespace dinámico
-async function queryBlizzardItem(itemId, namespace, token) {
+// 2. FUNCIÓN: Consultar API de Blizzard
+async function queryBlizzardItem(itemId, namespace, locale, token) {
     const itemUrl = `https://${REGION}.api.blizzard.com/data/wow/item/${itemId}`;
     const response = await axios.get(itemUrl, {
         params: { 
             namespace: namespace, 
-            locale: LOCALE, 
+            locale: locale, 
             access_token: token 
         }
     });
     return response.data;
 }
 
-// 3. FUNCIÓN PRINCIPAL: Buscar con re-intento automático (Retail -> Classic)
+// 3. FUNCIÓN PRINCIPAL: Buscar con re-intentos de Namespace e Idioma
 async function fetchItemById(itemId) {
     try {
         const token = await getBlizzardAccessToken();
-        let itemData = null;
-        let selectedNamespace = `static-${REGION}`; // Intentar Retail primero
+        let item = null;
 
-        try {
-            console.log(`[Bot] Buscando ID ${itemId} en Retail (${selectedNamespace})...`);
-            itemData = await queryBlizzardItem(itemId, selectedNamespace, token);
-        } catch (retailError) {
-            // Si da 404, cambiamos el chip e intentamos con la base de datos Classic
-            if (retailError.response?.status === 404) {
-                selectedNamespace = `static-classic-${REGION}`;
-                console.log(`[Bot] No está en Retail. Reintentando ID ${itemId} en Classic (${selectedNamespace})...`);
-                itemData = await queryBlizzardItem(itemId, selectedNamespace, token);
-            } else {
-                throw retailError;
+        // Lista de combinaciones lógicas a intentar antes de rendirse
+        const intentos = [
+            { ns: `static-${REGION}`, lang: 'es_MX', label: 'Retail (Español)' },
+            { ns: `static-classic-${REGION}`, lang: 'es_MX', label: 'Classic (Español)' },
+            { ns: `static-${REGION}`, lang: 'en_US', label: 'Retail (Inglés)' },
+            { ns: `static-classic-${REGION}`, lang: 'en_US', label: 'Classic (Inglés)' }
+        ];
+
+        for (const intento of intentos) {
+            try {
+                console.log(`[Bot] Probando ID ${itemId} en ${intento.label}...`);
+                item = await queryBlizzardItem(itemId, intento.ns, intento.lang, token);
+                if (item) break; // Si encontramos datos, rompemos el ciclo
+            } catch (err) {
+                // Si es un 404, permitimos que continúe el bucle al siguiente intento
+                if (err.response?.status !== 404) throw err;
             }
         }
+
+        if (!item) {
+            return `❌ El ID \`${itemId}\` no se pudo encontrar en ninguna combinación de la base de datos de Blizzard (Retail/Classic/Español/Inglés).`;
+        }
         
-        const item = itemData;
         let mensaje = `📦 *Objeto Encontrado en Blizzard* 📦\n\n`;
         mensaje += `• *Nombre:* ${item.name}\n`;
         mensaje += `• *ID del Objeto:* ${item.id}\n`;
@@ -74,11 +80,8 @@ async function fetchItemById(itemId) {
         return mensaje;
 
     } catch (error) {
-        if (error.response?.status === 404) {
-            return `❌ El ID \`${itemId}\` no se encontró ni en la base de datos de Retail ni en la de Classic de Blizzard.`;
-        }
-        console.error('Error al consultar objeto:', error.message);
-        return `❌ Hubo un error al procesar el objeto con Blizzard.`;
+        console.error('Error crítico al consultar objeto:', error.message);
+        return `❌ Hubo un error inesperado al procesar el objeto con Blizzard.`;
     }
 }
 
