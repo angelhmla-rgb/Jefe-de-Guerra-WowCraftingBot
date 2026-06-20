@@ -1,4 +1,4 @@
- import axios from 'axios';
+import axios from 'axios';
 import pkg from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
 
@@ -115,4 +115,3 @@ client.on('message_create', async (msg) => {
 });
 
 client.initialize();
-
