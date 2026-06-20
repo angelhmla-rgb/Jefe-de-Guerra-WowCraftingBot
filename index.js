@@ -34,26 +34,26 @@ async function getBlizzardAccessToken() {
 async function getRecipeByNameText(recipeName) {
     try {
         const token = await getBlizzardAccessToken();
-        const cleanName = recipeName.toLowerCase().trim();
-
+        
+        // Buscamos el ID de la receta usando el Search API de Blizzard
         const searchUrl = `https://${REGION}.api.blizzard.com/data/wow/search/recipe`;
         const searchResponse = await axios.get(searchUrl, {
             params: {
                 namespace: `static-${REGION}`,
                 locale: LOCALE,
                 access_token: token,
-                'name.es_MX': cleanName,
+                'name.es_MX': recipeName, // Búsqueda exacta o parcial por nombre
                 _page: 1,
                 _pageSize: 1
             }
         });
 
         const results = searchResponse.data.results;
-        
         if (!results || results.length === 0) {
-            return `❌ No encontré ninguna receta que coincida exactamente con "${recipeName}" en Blizzard. Revisa que esté bien escrita.`;
+            return `❌ No encontré ninguna receta que se llame "${recipeName}" en los archivos de Blizzard.`;
         }
 
+        // Teniendo el ID del primer resultado, consultamos sus materiales directos
         const recipeId = results[0].data.id;
         const recipeUrl = `https://${REGION}.api.blizzard.com/data/wow/recipe/${recipeId}`;
         const recipeResponse = await axios.get(recipeUrl, {
@@ -66,7 +66,7 @@ async function getRecipeByNameText(recipeName) {
         mensaje += `\n*Materiales Requeridos:*\n`;
         
         if (!recipe.reagents || recipe.reagents.length === 0) {
-            mensaje += `• _Esta receta no requiere materiales consumibles._\n`;
+            mensaje += `• _Esta receta no requiere materiales consumibles o es una habilidad._\n`;
         } else {
             recipe.reagents.forEach(reagent => {
                 mensaje += `• ${reagent.quantity}x ${reagent.reagent.name}\n`;
@@ -76,8 +76,8 @@ async function getRecipeByNameText(recipeName) {
         return mensaje;
 
     } catch (error) {
-        console.error('Error al consultar Blizzard:', error.response?.data || error.message);
-        return `❌ Hubo un error al procesar la receta con Blizzard.`;
+        console.error(error);
+        return `❌ Hubo un error al conectar con Blizzard. Inténtalo de nuevo.`;
     }
 }
 
@@ -98,17 +98,19 @@ client.on('ready', () => {
     console.log('¡El bot de Jefe de Guerra está conectado y escuchando comandos!');
 });
 
-// ESCUCHAR TODOS LOS MENSAJES
+// ESCUCHAR TODOS LOS MENSAJES (PROPIOS Y DE TERCEROS)
 client.on('message_create', async (msg) => {
     if (msg.body.startsWith('!receta ')) {
+        // Cortamos el texto para sacar solo el nombre de la receta
         const query = msg.body.substring(8).trim();
         
         if (!query) {
             return msg.reply('⚠️ Escribe el nombre de la receta. Ejemplo: `!receta Frasco de poder aislado`');
         }
 
-        console.log(`[Bot] Buscando en Blizzard: ${query}`);
+        console.log(`[Bot] Procesando solicitud para: ${query}`);
         
+        // Obtenemos los materiales por nombre desde Blizzard y respondemos
         const resultado = await getRecipeByNameText(query);
         await msg.reply(resultado);
     }
