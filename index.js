@@ -1,126 +1,5 @@
-import pkg from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal';
-
-const { Client, LocalAuth } = pkg;
-
-let RECETAS_DB = {};
-
-// Quita acentos y caracteres raros para comparar limpiamente
-function normalizarTexto(texto) {
-    return texto
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9 ]/g, "") // Remueve símbolos extraños
-        .trim();
-}
-
-function parsearLuaGuildCrafts(contenidoLua) {
-    console.log("[Parser] Iniciando lectura del archivo GuildCrafts.lua...");
-    const lineas = contenidoLua.split(/\r?\n/);
-    let recetaActual = null;
-    let materialesActuales = [];
-    let enBloqueRecipeDB = false;
-
-    RECETAS_DB = {};
-
-    for (let i = 0; i < lineas.length; i++) {
-        const linea = lineas[i].trim();
-
-        // Detectar inicio de base de datos de recetas
-        if (linea.includes('["_recipeDB"]') || linea.includes('["recipeDB"]')) {
-            enBloqueRecipeDB = true;
-            continue;
-        }
-        
-        // Detectar fin del bloque de recetas
-        if (enBloqueRecipeDB && (linea.startsWith('["Jefe de Guerra') || linea.startsWith('["professions"]'))) {
-            if (recetaActual) {
-                const llave = normalizarTexto(recetaActual);
-                if (llave) {
-                    RECETAS_DB[llave] = {
-                        nombreOriginal: recetaActual,
-                        materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
-                    };
-                }
-            }
-            enBloqueRecipeDB = false;
-        }
-
-        if (enBloqueRecipeDB) {
-            // Si inicia un nuevo bloque numérico (ej: [12345] = {), guardamos la receta anterior
-            if (linea.match(/^\[\d+\]\s*=\s*\{/) || linea.startsWith('},')) {
-                if (recetaActual) {
-                    const llave = normalizarTexto(recetaActual);
-                    if (llave) {
-                        RECETAS_DB[llave] = {
-                            nombreOriginal: recetaActual,
-                            materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
-                        };
-                    }
-                }
-                recetaActual = null;
-                materialesActuales = [];
-                continue;
-            }
-
-            // Capturar el nombre del objeto principal
-            const nameMatch = linea.match(/\["name"\]\s*=\s*"([^"]+)"/);
-            if (nameMatch && !recetaActual) {
-                recetaActual = nameMatch[1].trim();
-                continue;
-            }
-
-            // Capturar materiales (Buscamos patrones comunes de ingredientes en Lua)
-            // Captura líneas que tengan un nombre y una cantidad juntas
-            if (linea.includes('["name"]') && (linea.includes('["count"]') || linea.includes('["num"]'))) {
-                const matNameMatch = linea.match(/\["name"\]\s*=\s*"([^"]+)"/);
-                const matCountMatch = linea.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-                
-                if (matNameMatch && matCountMatch) {
-                    materialesActuales.push(`• ${matCountMatch[1]}x ${matNameMatch[1]}`);
-                }
-            }
-        }
-    }
-
-    // Guardar la última receta procesada
-    if (recetaActual) {
-        const llave = normalizarTexto(recetaActual);
-        if (llave) {
-            RECETAS_DB[llave] = {
-                nombreOriginal: recetaActual,
-                materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
-            };
-        }
-    }
-
-    console.log(`[Parser] Procesamiento finalizado. Recetas indexadas: ${Object.keys(RECETAS_DB).length}`);
-}
-
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
-});
-
-client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
-client.on('ready', () => console.log('¡Bot Activo!'));
-
 client.on('message_create', async (msg) => {
-    // Aceptamos comandos con o sin el prefijo "!receta " para mayor comodidad
-    let textoOriginal = msg.body.trim();
-    let textoLower = textoOriginal.toLowerCase();
-    
-    if (textoLower.startsWith('!receta ')) {
-        textoOriginal = textoOriginal.substring(8).trim();
-        textoLower = textoOriginal.toLowerCase();
-    } else if (textoLower.startsWith('!')) {
-        textoOriginal = textoOriginal.substring(1).trim();
-        textoLower = textoOriginal.toLowerCase();
-    } else {
-        return; // Ignorar mensajes que no empiecen con !
-    }
-
+    // 1. PRIMERO REVISAMOS SI ES EL ARCHIVO LUA (Antes de validar comandos)
     if (msg.hasMedia && msg.type === 'document') {
         const media = await msg.downloadMedia();
         if (media.filename && media.filename.endsWith('.lua')) {
@@ -134,6 +13,20 @@ client.on('message_create', async (msg) => {
                 return;
             }
         }
+    }
+
+    // 2. LUEGO PROCESAMOS LOS COMANDOS
+    let textoOriginal = msg.body.trim();
+    let textoLower = textoOriginal.toLowerCase();
+    
+    if (textoLower.startsWith('!receta ')) {
+        textoOriginal = textoOriginal.substring(8).trim();
+        textoLower = textoOriginal.toLowerCase();
+    } else if (textoLower.startsWith('!')) {
+        textoOriginal = textoOriginal.substring(1).trim();
+        textoLower = textoOriginal.toLowerCase();
+    } else {
+        return; // Ignorar si no es comando ni un archivo válido
     }
 
     if (textoLower === 'lista') {
@@ -174,5 +67,3 @@ client.on('message_create', async (msg) => {
         await msg.reply(`❌ No encontré ningún elemento que coincida con "${textoOriginal}".\n\n💡 _Tip: Intenta buscar materiales base como "seda", "plata" o "cuero" para verificar qué hay guardado._`);
     }
 });
-
-client.initialize();
