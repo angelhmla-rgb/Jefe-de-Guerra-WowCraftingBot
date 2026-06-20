@@ -7,6 +7,7 @@ const { Client, LocalAuth } = pkg;
 const CLIENT_ID = process.env.BLIZZARD_CLIENT_ID;
 const CLIENT_SECRET = process.env.BLIZZARD_CLIENT_SECRET;
 const REGION = process.env.BLIZZARD_REGION || 'us'; 
+const LOCALE = 'es_MX';
 
 // 1. FUNCIÓN: Obtener Token
 async function getBlizzardAccessToken() {
@@ -28,64 +29,39 @@ async function getBlizzardAccessToken() {
     }
 }
 
-// 2. FUNCIÓN: Consultar API de Blizzard
-async function queryBlizzardItem(itemId, namespace, locale, token) {
-    const itemUrl = `https://${REGION}.api.blizzard.com/data/wow/item/${itemId}`;
-    const response = await axios.get(itemUrl, {
-        params: { 
-            namespace: namespace, 
-            locale: locale, 
-            access_token: token 
-        }
-    });
-    return response.data;
-}
-
-// 3. FUNCIÓN PRINCIPAL: Buscar con re-intentos de Namespace e Idioma
+// 2. FUNCIÓN PRINCIPAL: Buscar Objeto usando la cabecera estándar Bearer
 async function fetchItemById(itemId) {
     try {
         const token = await getBlizzardAccessToken();
-        let item = null;
-
-        // Lista de combinaciones lógicas a intentar antes de rendirse
-        const intentos = [
-            { ns: `static-${REGION}`, lang: 'es_MX', label: 'Retail (Español)' },
-            { ns: `static-classic-${REGION}`, lang: 'es_MX', label: 'Classic (Español)' },
-            { ns: `static-${REGION}`, lang: 'en_US', label: 'Retail (Inglés)' },
-            { ns: `static-classic-${REGION}`, lang: 'en_US', label: 'Classic (Inglés)' }
-        ];
-
-        for (const intento of intentos) {
-            try {
-                console.log(`[Bot] Probando ID ${itemId} en ${intento.label}...`);
-                item = await queryBlizzardItem(itemId, intento.ns, intento.lang, token);
-                if (item) break; // Si encontramos datos, rompemos el ciclo
-            } catch (err) {
-                // Si es un 404, permitimos que continúe el bucle al siguiente intento
-                if (err.response?.status !== 404) throw err;
-            }
-        }
-
-        if (!item) {
-            return `❌ El ID \`${itemId}\` no se pudo encontrar en ninguna combinación de la base de datos de Blizzard (Retail/Classic/Español/Inglés).`;
-        }
         
-        let mensaje = `📦 *Objeto Encontrado en Blizzard* 📦\n\n`;
+        // La API de Blizzard prefiere el token en los headers en vez de los params para evitar bloqueos
+        const itemUrl = `https://${REGION}.api.blizzard.com/data/wow/item/${itemId}?namespace=static-${REGION}&locale=${LOCALE}`;
+        
+        console.log(`[Bot] Intentando conectar con Blizzard para el ID: ${itemId}`);
+        
+        const response = await axios.get(itemUrl, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        const item = response.data;
+        let mensaje = `📦 *Objeto Encontrado en WoW* 📦\n\n`;
         mensaje += `• *Nombre:* ${item.name}\n`;
-        mensaje += `• *ID del Objeto:* ${item.id}\n`;
+        mensaje += `• *ID:* ${item.id}\n`;
         if (item.quality?.name) mensaje += `• *Calidad:* ${item.quality.name}\n`;
-        if (item.item_class?.name) mensaje += `• *Categoría:* ${item.item_class.name}\n`;
-        if (item.required_level) mensaje += `• *Nivel Requerido:* ${item.required_level}\n`;
+        if (item.item_class?.name) mensaje += `• *Clase:* ${item.item_class.name}\n`;
+        if (item.required_level) mensaje += `• *Nivel Mínimo:* ${item.required_level}\n`;
         
         return mensaje;
 
     } catch (error) {
-        console.error('Error crítico al consultar objeto:', error.message);
-        return `❌ Hubo un error inesperado al procesar el objeto con Blizzard.`;
+        console.error('Error al consultar objeto:', error.response?.data || error.message);
+        return `❌ No se pudo obtener el ID \`${itemId}\`. Asegúrate de que el ID existe en Retail o intenta con otro.`;
     }
 }
 
-// 4. INICIALIZAR BOT
+// 3. INICIALIZAR BOT
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
@@ -100,7 +76,7 @@ client.on('message_create', async (msg) => {
         const itemId = msg.body.split(' ')[1]?.trim();
         
         if (!itemId || !/^\d+$/.test(itemId)) {
-            return msg.reply('⚠️ Por favor ingresa un ID numérico válido. Ejemplo: `!objeto 22861`');
+            return msg.reply('⚠️ Por favor ingresa un ID numérico válido.');
         }
 
         const resultado = await fetchItemById(itemId);
