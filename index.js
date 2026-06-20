@@ -35,7 +35,7 @@ function parsearLuaGuildCrafts(contenidoLua) {
             if (recetaActual) {
                 RECETAS_DB[recetaActual.toLowerCase().trim()] = {
                     nombreOriginal: recetaActual,
-                    materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• Materiales no especificados."
+                    materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
                 };
             }
             enBloqueRecipeDB = false;
@@ -46,7 +46,7 @@ function parsearLuaGuildCrafts(contenidoLua) {
                 if (recetaActual) {
                     RECETAS_DB[recetaActual.toLowerCase().trim()] = {
                         nombreOriginal: recetaActual,
-                        materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• Materiales no especificados."
+                        materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
                     };
                 }
                 recetaActual = null;
@@ -65,7 +65,7 @@ function parsearLuaGuildCrafts(contenidoLua) {
                 const matCountMatch = linea.match(/\["count"\]\s*=\s*(\d+)/);
                 
                 if (matNameMatch && matCountMatch) {
-                    materialesActuales.push(• ${matCountMatch[1]}x ${matNameMatch[1]});
+                    materialesActuales.push(`• ${matCountMatch[1]}x ${matNameMatch[1]}`);
                 }
             }
         }
@@ -74,11 +74,11 @@ function parsearLuaGuildCrafts(contenidoLua) {
     if (recetaActual) {
         RECETAS_DB[recetaActual.toLowerCase().trim()] = {
             nombreOriginal: recetaActual,
-            materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• Materiales no especificados."
+            materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
         };
     }
 
-    console.log([Parser] Procesamiento finalizado. Recetas indexadas: ${Object.keys(RECETAS_DB).length});
+    console.log(`[Parser] Procesamiento finalizado. Recetas indexadas: ${Object.keys(RECETAS_DB).length}`);
 }
 
 const client = new Client({
@@ -98,10 +98,10 @@ client.on('message_create', async (msg) => {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} recetas).);
+                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} recetas).`);
                 return;
             } catch (err) {
-                await msg.reply(❌ Error: ${err.message});
+                await msg.reply(`❌ Error: ${err.message}`);
                 return;
             }
         }
@@ -114,8 +114,8 @@ client.on('message_create', async (msg) => {
             await msg.reply("⚠️ La base de datos está vacía en este momento.");
             return;
         }
-        const muestra = llaves.slice(0, 30).map(k => • ${RECETAS_DB[k].nombreOriginal}).join("\n");
-        await msg.reply(📋 *Muestra de recetas en memoria (Primeras 30):*\n\n${muestra});
+        const muestra = llaves.slice(0, 30).map(k => `• ${RECETAS_DB[k].nombreOriginal}`).join("\n");
+        await msg.reply(`📋 *Muestra de recetas en memoria (Primeras 30):*\n\n${muestra}`);
         return;
     }
 
@@ -124,7 +124,7 @@ client.on('message_create', async (msg) => {
         if (texto === '!mangosta') busqueda = 'mangosta';
 
         if (Object.keys(RECETAS_DB).length === 0) {
-            await msg.reply(⚠️ La base de datos está vacía. Reenvía el archivo *GuildCrafts.lua*.);
+            await msg.reply(`⚠️ La base de datos está vacía. Reenvía el archivo *GuildCrafts.lua*.`);
             return;
         }
 
@@ -135,12 +135,12 @@ client.on('message_create', async (msg) => {
 
         if (encontradaKey) {
             const receta = RECETAS_DB[encontradaKey];
-            let mensaje = 📜 *Receta: ${receta.nombreOriginal}* 📜\n\n;
-            mensaje += 🛠️ *Materiales:*\n${receta.materiales}\n\n;
-            mensaje += 👥 _Revisa las profesiones en la guild._;
+            let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n`;
+            mensaje += `🛠️ *Materiales:*\n${receta.materiales}\n\n`;
+            mensaje += `👥 _Revisa las profesiones en la guild._`;
             await msg.reply(mensaje);
         } else {
-            await msg.reply(❌ No encontré "${busqueda}" o "${terminoIngles}".\n\n💡 Tip: Escribe *!lista* para ver qué nombres guardó el bot.);
+            await msg.reply(`❌ No encontré "${busqueda}" o "${terminoIngles}".\n\n💡 Tip: Escribe *!lista* para ver qué nombres guardó el bot.`);
         }
     }
 });
