@@ -11,90 +11,88 @@ function normalizarTexto(texto) {
         .toLowerCase()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9 ]/g, "") // Remueve símbolos extraños
+        .replace(/[^a-z0-9 ]/g, "")
         .trim();
 }
 
 function parsearLuaGuildCrafts(contenidoLua) {
     console.log("[Parser] Iniciando lectura del archivo GuildCrafts.lua...");
-    const lineas = contenidoLua.split(/\r?\n/);
-    let recetaActual = null;
-    let materialesActuales = [];
-    let enBloqueRecipeDB = false;
-
+    
+    // Dividir el archivo por bloques de recetas en lugar de ir línea por línea
+    // Esto nos permite capturar de forma exacta todo lo que pertenece a un objeto.
+    const bloques = contenidoLua.split(/\[\d+\]\s*=\s*\{/);
     RECETAS_DB = {};
 
-    for (let i = 0; i < lineas.length; i++) {
-        const linea = lineas[i].trim();
+    console.log(`[Parser] Bloques detectados preliminarmente: ${bloques.length}`);
 
-        // Detectar inicio de base de datos de recetas
-        if (linea.includes('["_recipeDB"]') || linea.includes('["recipeDB"]')) {
-            enBloqueRecipeDB = true;
-            continue;
-        }
+    for (let i = 1; i < bloques.length; i++) {
+        const bloque = bloques[i];
+
+        // 1. Extraer el nombre de la receta / item principal
+        const nameMatch = bloque.match(/\["name"\]\s*=\s*"([^"]+)"/);
+        if (!nameMatch) continue;
+        const nombreReceta = nameMatch[1].trim();
+
+        // 2. Extraer los materiales
+        // Buscamos todas las ocurrencias de materiales dentro de la subestructura del bloque
+        const materiales = [];
+        const regexMateriales = /\{\s*\["name"\]\s*=\s*"([^"]+)"\s*,\s*\["count"\]\s*=\s*(\d+)/g;
+        let matMatch;
         
-        // Detectar fin del bloque de recetas
-        if (enBloqueRecipeDB && (linea.startsWith('["Jefe de Guerra') || linea.startsWith('["professions"]'))) {
-            if (recetaActual) {
-                const llave = normalizarTexto(recetaActual);
-                if (llave) {
-                    RECETAS_DB[llave] = {
-                        nombreOriginal: recetaActual,
-                        materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
-                    };
-                }
-            }
-            enBloqueRecipeDB = false;
+        while ((matMatch = regexMateriales.exec(bloque)) !== null) {
+            materiales.push(`• ${matMatch[2]}x ${matMatch[1]}`);
         }
 
-        if (enBloqueRecipeDB) {
-            // Si inicia un nuevo bloque numérico (ej: [12345] = {), guardamos la receta anterior
-            if (linea.match(/^\[\d+\]\s*=\s*\{/) || linea.startsWith('},')) {
-                if (recetaActual) {
-                    const llave = normalizarTexto(recetaActual);
-                    if (llave) {
-                        RECETAS_DB[llave] = {
-                            nombreOriginal: recetaActual,
-                            materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
-                        };
-                    }
-                }
-                recetaActual = null;
-                materialesActuales = [];
-                continue;
+        // Si la regex anterior no pesca por el orden, intentamos una variante común de Lua
+        if (materiales.length === 0) {
+            const regexMaterialesAlt = /\{\s*\["count"\]\s*=\s*(\d+)\s*,\s*\["name"\]\s*=\s*"([^"]+)"/g;
+            while ((matMatch = regexMaterialesAlt.exec(bloque)) !== null) {
+                materiales.push(`• ${matMatch[1]}x ${matMatch[2]}`);
             }
+        }
 
-            // Capturar el nombre del objeto principal
-            const nameMatch = linea.match(/\["name"\]\s*=\s*"([^"]+)"/);
-            if (nameMatch && !recetaActual) {
-                recetaActual = nameMatch[1].trim();
-                continue;
+        // 3. Extraer los artesanos (Miembros de la hermandad que la conocen)
+        // El addon suele listar los nombres de los jugadores en un bloque llamado ["crafters"] o similar
+        const artesanos = [];
+        const regexCrafters = /\["crafters"\]\s*=\s*\{([^}]+)\}/;
+        const craftersBlock = bloque.match(regexCrafters);
+        
+        if (craftersBlock) {
+            // Extrae todos los nombres entre comillas dentro del bloque de crafters
+            const nombresMatch = craftersBlock[1].match(/"([^"]+)"/g);
+            if (nombresMatch) {
+                nombresMatch.forEach(nom => {
+                    artesanos.push(nom.replace(/"/g, '').trim());
+                });
             }
+        }
 
-            // Capturar materiales (Buscamos patrones comunes de ingredientes en Lua)
-            if (linea.includes('["name"]') && (linea.includes('["count"]') || linea.includes('["num"]'))) {
-                const matNameMatch = linea.match(/\["name"\]\s*=\s*"([^"]+)"/);
-                const matCountMatch = linea.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-                
-                if (matNameMatch && matCountMatch) {
-                    materialesActuales.push(`• ${matCountMatch[1]}x ${matNameMatch[1]}`);
+        // Si no se encuentra estructura de crafters, buscamos nombres sueltos asignados al ID
+        if (artesanos.length === 0) {
+            const regexJugadoresSueltos = /\["players"\]\s*=\s*\{([^}]+)\}/;
+            const playersBlock = bloque.match(regexJugadoresSueltos);
+            if (playersBlock) {
+                const nombresMatch = playersBlock[1].match(/"([^"]+)"/g);
+                if (nombresMatch) {
+                    nombresMatch.forEach(nom => {
+                        artesanos.push(nom.replace(/"/g, '').trim());
+                    });
                 }
             }
         }
-    }
 
-    // Guardar la última receta procesada
-    if (recetaActual) {
-        const llave = normalizarTexto(recetaActual);
+        // Guardar la receta procesada en nuestra base de datos organizada
+        const llave = normalizarTexto(nombreReceta);
         if (llave) {
             RECETAS_DB[llave] = {
-                nombreOriginal: recetaActual,
-                materiales: materialesActuales.length > 0 ? materialesActuales.join("\n") : "• _Materiales no especificados._"
+                nombreOriginal: nombreReceta,
+                materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se encontraron reactivos específicos en el archivo._",
+                artesanos: artesanos.length > 0 ? artesanos.join(", ") : "_Ninguno registrado en el addon aún._"
             };
         }
     }
 
-    console.log(`[Parser] Procesamiento finalizado. Recetas indexadas: ${Object.keys(RECETAS_DB).length}`);
+    console.log(`[Parser] Procesamiento finalizado. Elementos indexados listos: ${Object.keys(RECETAS_DB).length}`);
 }
 
 const client = new Client({
@@ -106,23 +104,23 @@ client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
 client.on('ready', () => console.log('¡Bot Activo!'));
 
 client.on('message_create', async (msg) => {
-    // 1. PRIMERO REVISAMOS SI ES EL ARCHIVO LUA (Antes de validar si lleva "!")
+    // 1. REVISAR SI ES EL ARCHIVO LUA
     if (msg.hasMedia && msg.type === 'document') {
         const media = await msg.downloadMedia();
         if (media.filename && media.filename.endsWith('.lua')) {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(`✅ *¡Base de datos cargada!* (${Object.keys(RECETAS_DB).length} elementos indexados).`);
+                await msg.reply(`✅ *¡Base de datos cargada correctamente!* (${Object.keys(RECETAS_DB).length} elementos listos para consultar con materiales y artesanos).`);
                 return;
             } catch (err) {
-                await msg.reply(`❌ Error al cargar LUA: ${err.message}`);
+                await msg.reply(`❌ Error al procesar el archivo LUA: ${err.message}`);
                 return;
             }
         }
     }
 
-    // 2. LUEGO PROCESAMOS LOS COMANDOS QUE EMPIECEN CON "!"
+    // 2. PROCESAR COMANDOS
     let textoOriginal = msg.body.trim();
     let textoLower = textoOriginal.toLowerCase();
     
@@ -133,7 +131,7 @@ client.on('message_create', async (msg) => {
         textoOriginal = textoOriginal.substring(1).trim();
         textoLower = textoOriginal.toLowerCase();
     } else {
-        return; // Ignorar si no es comando ni un archivo válido
+        return; 
     }
 
     if (textoLower === 'lista') {
@@ -148,7 +146,7 @@ client.on('message_create', async (msg) => {
     }
 
     if (Object.keys(RECETAS_DB).length === 0) {
-        await msg.reply(`⚠️ La base de datos está vacía. Reenvía el archivo *GuildCrafts.lua*.`);
+        await msg.reply(`⚠️ La base de datos está vacía. Por favor, reenvía el archivo *GuildCrafts.lua*.`);
         return;
     }
 
@@ -157,9 +155,9 @@ client.on('message_create', async (msg) => {
 
     if (llavesEncontradas.length === 1) {
         const receta = RECETAS_DB[llavesEncontradas[0]];
-        let mensaje = `📜 *Elemento: ${receta.nombreOriginal}* 📜\n\n`;
-        mensaje += `🛠️ *Componentes / Detalles:*\n${receta.materiales}\n\n`;
-        mensaje += `👥 _Revisa la disponibilidad en la hermandad._`;
+        let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n`;
+        mensaje += `🛠️ *Materiales Necesarios:*\n${receta.materiales}\n\n`;
+        mensaje += `👥 *Artesanos que pueden craftearlo:*\n${receta.artesanos}`;
         await msg.reply(mensaje);
     } else if (llavesEncontradas.length > 1) {
         let mensajeCoincidencias = `🔍 Encontré varias opciones para "${textoOriginal}":\n\n`;
@@ -171,7 +169,7 @@ client.on('message_create', async (msg) => {
         }
         await msg.reply(mensajeCoincidencias);
     } else {
-        await msg.reply(`❌ No encontré ningún elemento que coincida con "${textoOriginal}".\n\n💡 _Tip: Intenta buscar materiales base como "seda", "plata" o "cuero" para verificar qué hay guardado._`);
+        await msg.reply(`❌ No encontré ningún elemento que coincida con "${textoOriginal}".`);
     }
 });
 
