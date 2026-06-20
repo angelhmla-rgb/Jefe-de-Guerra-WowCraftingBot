@@ -137,3 +137,60 @@ client.on('message_create', async (msg) => {
                 await msg.reply(`❌ Error al procesar el archivo LUA: ${err.message}`);
                 return;
             }
+        }
+    }
+
+    // 2. PROCESAR COMANDOS
+    let textoOriginal = msg.body.trim();
+    let textoLower = textoOriginal.toLowerCase();
+    
+    if (textoLower.startsWith('!receta ')) {
+        textoOriginal = textoOriginal.substring(8).trim();
+        textoLower = textoOriginal.toLowerCase();
+    } else if (textoLower.startsWith('!')) {
+        textoOriginal = textoOriginal.substring(1).trim();
+        textoLower = textoOriginal.toLowerCase();
+    } else {
+        return; 
+    }
+
+    if (textoLower === 'lista') {
+        const llaves = Object.keys(RECETAS_DB);
+        if (llaves.length === 0) {
+            await msg.reply("⚠️ La base de datos está vacía.");
+            return;
+        }
+        const muestra = llaves.slice(0, 30).map(k => `• ${RECETAS_DB[k].nombreOriginal}`).join("\n");
+        await msg.reply(`📋 *Muestra de elementos (Primeras 30):*\n\n${muestra}`);
+        return;
+    }
+
+    if (Object.keys(RECETAS_DB).length === 0) {
+        await msg.reply(`⚠️ La base de datos está vacía. Por favor, reenvía el archivo *GuildCrafts.lua*.`);
+        return;
+    }
+
+    const busquedaNormalizada = normalizarTexto(textoOriginal);
+    let llavesEncontradas = Object.keys(RECETAS_DB).filter(k => k.includes(busquedaNormalizada));
+
+    if (llavesEncontradas.length === 1) {
+        const receta = RECETAS_DB[llavesEncontradas[0]];
+        let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n`;
+        mensaje += `🛠️ *Materiales Necesarios:*\n${receta.materiales}\n\n`;
+        mensaje += `👥 *Artesanos que pueden craftearlo:*\n${receta.artesanos}`;
+        await msg.reply(mensaje);
+    } else if (llavesEncontradas.length > 1) {
+        let mensajeCoincidencias = `🔍 Encontré varias opciones para "${textoOriginal}":\n\n`;
+        llavesEncontradas.slice(0, 15).forEach(k => {
+            mensajeCoincidencias += `• \`!${RECETAS_DB[k].nombreOriginal}\`\n`;
+        });
+        if (llavesEncontradas.length > 15) {
+            mensajeCoincidencias += `\n_...y ${llavesEncontradas.length - 15} opciones más._`;
+        }
+        await msg.reply(mensajeCoincidencias);
+    } else {
+        await msg.reply(`❌ No encontré ningún elemento que coincida con "${textoOriginal}".`);
+    }
+});
+
+client.initialize();
