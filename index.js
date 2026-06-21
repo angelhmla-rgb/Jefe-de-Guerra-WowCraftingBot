@@ -8,14 +8,23 @@ function normalizarTexto(t) {
     return t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").trim();
 }
 
+function limpiarNombreArtesano(nombre) {
+    // Elimina el sufijo del servidor "- Dreamscythe" o similares si vienen pegados al personaje
+    return nombre.split('-')[0].trim();
+}
+
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando lectura secuencial corregida...");
+    console.log("[Parser] Iniciando lectura secuencial inteligente...");
     RECETAS_DB = {};
     
     const lineas = lua.split(/\r?\n/);
+    
     let recetaActual = null;
     let materiales = [];
     let artesanos = [];
+    
+    let dentroDeReagents = false;
+    let dentroDeUnReagent = false;
     
     let tempMatName = null;
     let tempMatCount = null;
@@ -23,14 +32,20 @@ function parsearLuaGuildCrafts(lua) {
     const filtrarKeywords = [
         "name", "count", "num", "crafters", "players", "recipes", "id", "profession", 
         "icon", "itemid", "itemlink", "rank", "level", "minlevel", "source", "skill", 
-        "orange", "yellow", "green", "gray", "disabled", "favorite", "true", "false", "link"
+        "orange", "yellow", "green", "gray", "disabled", "favorite", "true", "false", "link",
+        "global", "category", "reagents", "default"
     ];
 
     for (let i = 0; i < lineas.length; i++) {
         const l = lineas[i].trim();
 
-        // 1. Detectar inicio de bloque [ID] = {
-        if (l.match(/^\[\d+\]\s*=\s*\{/)) {
+        // Si la línea es parte de la configuración final de tus personajes (ej: = "Default"), la ignoramos por completo
+        if (l.includes('["') && l.includes('="Default"') || l.includes('=\s*"Default"')) {
+            continue;
+        }
+
+        // 1. Detectar inicio de una receta principal: [ID] = {
+        if (l.match(/^\[-?\d+\]\s*=\s*\{/) && !l.includes('_recipeDB')) {
             if (recetaActual) {
                 const llave = normalizarTexto(recetaActual);
                 if (llave) {
@@ -44,55 +59,73 @@ function parsearLuaGuildCrafts(lua) {
             recetaActual = null;
             materiales = [];
             artesanos = [];
+            dentroDeReagents = false;
+            dentroDeUnReagent = false;
             tempMatName = null;
             tempMatCount = null;
             continue;
         }
 
-        // 2. Identificar el nombre de la receta (La primera ocurrencia de ["name"] en el bloque)
-        const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-        if (nameM && !recetaActual) {
-            const posNombre = nameM[1].trim();
-            if (!posNombre.includes('recipeDB') && !posNombre.includes('_recipeDB')) {
-                recetaActual = posNombre;
-            }
-            continue; 
+        // 2. Control de sub-bloques de Reactivos
+        if (l.startsWith('["reagents"]')) {
+            dentroDeReagents = true;
+            continue;
         }
-
-        // Si ya tenemos una receta en proceso, extraemos su contenido interno
-        if (recetaActual) {
-            // Captura de ingredientes
-            if (nameM) {
-                const posibleMat = nameM[1].trim();
-                if (posibleMat !== recetaActual) {
-                    tempMatName = posibleMat;
-                }
-            }
-
-            const matCountMatch = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-            if (matCountMatch) {
-                tempMatCount = matCountMatch[1];
-            }
-
+        if (dentroDeReagents && l.startsWith('{')) {
+            dentroDeUnReagent = true;
+            continue;
+        }
+        if (dentroDeUnReagent && (l.startsWith('},') || l.startsWith('}'))) {
             if (tempMatName && tempMatCount) {
                 materiales.push(`• ${tempMatCount}x ${tempMatName}`);
-                tempMatName = null;
-                tempMatCount = null;
             }
+            tempMatName = null;
+            tempMatCount = null;
+            dentroDeUnReagent = false;
+            continue;
+        }
+        if (dentroDeReagents && (l.startsWith('},') || l.startsWith('}'))) {
+            dentroDeReagents = false;
+            continue;
+        }
 
-            // Captura de artesanos primarios
+        // 3. Captura de nombres (Receta vs Material)
+        const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
+        if (nameM) {
+            const valorNombre = nameM[1].trim();
+            if (dentroDeUnReagent) {
+                tempMatName = valorNombre;
+            } else if (!recetaActual) {
+                if (!valorNombre.includes('recipeDB')) {
+                    recetaActual = valorNombre;
+                }
+            }
+            continue;
+        }
+
+        // Cantidad de materiales
+        const countM = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
+        if (countM && dentroDeUnReagent) {
+            tempMatCount = countM[1];
+            continue;
+        }
+
+        // 4. Extracción selectiva de Artesanos Reales dentro de la receta
+        if (recetaActual && !dentroDeReagents) {
+            // Formato standard: ["NombreJugador"] = true o ["NombreJugador-Dreamscythe"] = true
             const playM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playM) {
-                const jug = playM[1].trim();
+                let jug = limpiarNombreArtesano(playM[1]);
                 if (!filtrarKeywords.includes(jug.toLowerCase()) && jug !== recetaActual && isNaN(jug) && jug.length > 2) {
                     if (!artesanos.includes(jug)) artesanos.push(jug);
                 }
+                continue;
             }
 
-            // Captura de artesanos secundarios (texto plano)
+            // Formato alternativo de lista de artesanos en texto plano: "Nombre", o "Nombre-Dreamscythe",
             const crafterSimpleM = l.match(/"([^"]+)"\s*,?/);
             if (crafterSimpleM && l.includes('"') && !l.includes('=')) {
-                const jugSuelto = crafterSimpleM[1].trim();
+                let jugSuelto = limpiarNombreArtesano(crafterSimpleM[1]);
                 if (jugSuelto.length > 2 && isNaN(jugSuelto) && !filtrarKeywords.includes(jugSuelto.toLowerCase()) && jugSuelto !== recetaActual) {
                     if (!artesanos.includes(jugSuelto)) artesanos.push(jugSuelto);
                 }
@@ -100,7 +133,7 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    // Guardar el último elemento al salir del ciclo
+    // Guardar última receta procesada
     if (recetaActual) {
         const llave = normalizarTexto(recetaActual);
         if (llave) {
@@ -112,7 +145,7 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    console.log(`[Parser] Indexación completada. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación completada con éxito. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
