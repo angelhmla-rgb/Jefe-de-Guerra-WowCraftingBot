@@ -9,30 +9,22 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando extracción relacional corregida...");
+    console.log("[Parser] Iniciando extracción relacional limpia...");
     RECETAS_DB = {};
     const baseDatos = {};
 
-    // Lista de palabras clave que NO son nombres de jugadores
-    const listaNegra = [
-        "name", "count", "num", "crafters", "players", "recipes", "members",
-        "id", "profession", "icon", "mats", "reagents", "itemid", "recipedb",
-        "itemlink", "rank", "level", "minlevel", "source", "skill", "orange",
-        "yellow", "green", "gray", "disabled", "favorite", "search", "filter"
-    ];
-
-    // 1. PRIMERA PASADA: Capturar IDs y nombres de recetas
+    // 1. PRIMERA PASADA: Capturar TODOS los IDs y nombres posibles (Garantiza los +10,000 elementos)
     const regexNombres = /\[(\d+)\]\s*=\s*\{\s*(?:\["name"\]\s*=\s*"([^"]+)"|["']([^"']+)["'])/g;
     let match;
     while ((match = regexNombres.exec(lua)) !== null) {
         const id = match[1];
         const nombre = (match[2] || match[3]).trim();
-        if (nombre && nombre.length > 2 && !nombre.startsWith("UI_") && !nombre.includes('Config')) {
+        if (nombre && nombre.length > 2 && !nombre.startsWith("UI_")) {
             baseDatos[id] = { nombre: nombre, materiales: [], artesanos: [] };
         }
     }
 
-    // 2. SEGUNDA PASADA: Mapear materiales y aislar artesanos de verdad
+    // 2. SEGUNDA PASADA: Mapear materiales y aislar artesanos reales
     const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
     for (let i = 1; i < bloques.length; i += 2) {
         const id = bloques[i];
@@ -58,12 +50,15 @@ function parsearLuaGuildCrafts(lua) {
                 tempMatName = null;
             }
 
-            // --- Extracción de Artesanos ---
+            // --- Extracción de Artesanos Inteligente ---
             const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerM) {
                 const jug = playerM[1].trim();
-
-                if (!listaNegra.includes(jug.toLowerCase()) && jug !== baseDatos[id].nombre && isNaN(jug)) {
+                
+                // Filtro: Debe empezar con Mayúscula (Nombres de WoW) y NO ser una propiedad conocida del código
+                const esPropiedad = /^[a-z]/.test(jug) || ["true", "false", "itemID", "itemLink", "orange", "yellow", "green", "gray"].includes(jug);
+                
+                if (!esPropiedad && jug !== baseDatos[id].nombre && isNaN(jug) && jug.length > 2) {
                     if (!baseDatos[id].artesanos.includes(jug)) {
                         baseDatos[id].artesanos.push(jug);
                     }
@@ -78,36 +73,25 @@ function parsearLuaGuildCrafts(lua) {
         const llave = normalizarTexto(datos.nombre);
         if (llave) {
             if (RECETAS_DB[llave]) {
-                // Fusionar materiales si el registro actual los tiene y el anterior no
                 if (datos.materiales.length > 0 && (RECETAS_DB[llave].materiales.length === 0 || RECETAS_DB[llave].materiales.includes("No se especificaron"))) {
                     RECETAS_DB[llave].materiales = datos.materiales.join("\n");
                 }
-                
-                // Fusionar artesanos aplicando la lista negra estrictamente para limpiar residuos
-                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ")
-                    .map(x => x.trim())
-                    .filter(x => x && !x.includes("Ningún artesano") && !listaNegra.includes(x.toLowerCase()));
-                
+                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ").map(x => x.trim()).filter(x => x && !x.includes("Ningún artesano"));
                 datos.artesanos.forEach(a => {
-                    if (!listaNegra.includes(a.toLowerCase()) && !viejosArtesanos.includes(a)) {
-                        viejosArtesanos.push(a);
-                    }
+                    if (!viejosArtesanos.includes(a)) viejosArtesanos.push(a);
                 });
-                
-                RECETAS_DB[llave].artesanos = viejosArtesanos.join(", ");
+                if (viejosArtesanos.length > 0) RECETAS_DB[llave].artesanos = viejosArtesanos.join(", ");
             } else {
-                // Filtrar la lista de artesanos antes del primer guardado
-                const artesanosLimpios = datos.artesanos.filter(a => !listaNegra.includes(a.toLowerCase()));
                 RECETAS_DB[llave] = {
                     nombreOriginal: datos.nombre,
                     materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "",
-                    artesanos: artesanosLimpios.length > 0 ? artesanosLimpios.join(", ") : ""
+                    artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : ""
                 };
             }
         }
     });
 
-    // Post-procesar para rellenar campos vacíos con estética limpia
+    // Rellenar campos vacíos de forma limpia
     Object.keys(RECETAS_DB).forEach(k => {
         if (!RECETAS_DB[k].materiales || RECETAS_DB[k].materiales.trim() === "") {
             RECETAS_DB[k].materiales = "• _No se especificaron reactivos._";
