@@ -9,22 +9,22 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando extracción relacional avanzada...");
+    console.log("[Parser] Iniciando extracción relacional corregida...");
     RECETAS_DB = {};
     const baseDatos = {};
 
-    // 1. PRIMERA PASADA: Mapear todos los IDs y nombres de recetas válidos
+    // 1. PRIMERA PASADA: Capturar TODOS los IDs y nombres (Sin exclusiones agresivas de tablas)
     const regexNombres = /\[(\d+)\]\s*=\s*\{\s*(?:\["name"\]\s*=\s*"([^"]+)"|["']([^"']+)["'])/g;
     let match;
     while ((match = regexNombres.exec(lua)) !== null) {
         const id = match[1];
         const nombre = (match[2] || match[3]).trim();
-        if (nombre && !nombre.includes('recipeDB') && !nombre.includes('_recipeDB') && nombre.length > 2) {
+        if (nombre && nombre.length > 2 && !nombre.startsWith("UI_") && !nombre.includes('Config')) {
             baseDatos[id] = { nombre: nombre, materiales: [], artesanos: [] };
         }
     }
 
-    // 2. SEGUNDA PASADA: Analizar el bloque interno de cada ID para extraer reactivos y artesanos reales
+    // 2. SEGUNDA PASADA: Mapear materiales y aislar artesanos de verdad
     const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
     for (let i = 1; i < bloques.length; i += 2) {
         const id = bloques[i];
@@ -33,17 +33,12 @@ function parsearLuaGuildCrafts(lua) {
 
         const lineas = cuerpo.split('\n');
         let tempMatName = null;
-        let dentroDeCrafters = false;
 
         for (let j = 0; j < lineas.length; j++) {
             const l = lineas[j].trim();
-            if (l.startsWith('}') && !l.includes('{')) {
-                // Si se cierra un sub-bloque interno, reiniciamos el estado de crafters
-                dentroDeCrafters = false;
-                continue;
-            }
+            if (l.startsWith('}') && !l.includes('{')) break; 
 
-            // --- SECCIÓN DE MATERIALES ---
+            // --- Extracción de Materiales ---
             const matNameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
             if (matNameM && matNameM[1].trim() !== baseDatos[id].nombre) {
                 tempMatName = matNameM[1].trim();
@@ -55,44 +50,29 @@ function parsearLuaGuildCrafts(lua) {
                 tempMatName = null;
             }
 
-            // --- SECCIÓN DE ARTESANOS (FILTRADO ESTRICTO) ---
-            if (l.includes('["crafters"]') || l.includes('["players"]') || l.includes('["members"]')) {
-                dentroDeCrafters = true;
-                continue;
-            }
-
-            // Captura formato: ["Nombre"] = true o ["Nombre"] = 1
+            // --- Extracción de Artesanos (Lista Negra Total de Metadatos) ---
             const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerM) {
                 const jug = playerM[1].trim();
-                const filtrar = [
-                    "name", "count", "num", "crafters", "players", "recipes", 
-                    "id", "profession", "icon", "mats", "reagents", "itemid", 
-                    "itemlink", "rank", "level", "minlevel", "source", "skill", "orange"
+                
+                // Si la línea contiene CUALQUIERA de estas palabras del addon, NO es un jugador
+                const listaNegra = [
+                    "name", "count", "num", "crafters", "players", "recipes", "members",
+                    "id", "profession", "icon", "mats", "reagents", "itemid", "recipedb",
+                    "itemlink", "rank", "level", "minlevel", "source", "skill", "orange",
+                    "yellow", "green", "gray", "disabled", "favorite", "search", "filter"
                 ];
 
-                if (!filtrar.includes(jug.toLowerCase()) && jug !== baseDatos[id].nombre && isNaN(jug)) {
+                if (!listaNegra.includes(jug.toLowerCase()) && jug !== baseDatos[id].nombre && isNaN(jug)) {
                     if (!baseDatos[id].artesanos.includes(jug)) {
                         baseDatos[id].artesanos.push(jug);
-                    }
-                }
-                continue;
-            }
-
-            // Captura formato de lista secuencial o plano si estamos en la subsección correcta (Ej: "Nombre", o [1] = "Nombre")
-            const sueltoM = l.match(/(?:\[\d+\]\s*=\s*)?"([^"]+)"\s*,?/);
-            if (sueltoM && dentroDeCrafters) {
-                const jugSuelto = sueltoM[1].trim();
-                if (jugSuelto.length > 2 && isNaN(jugSuelto) && jugSuelto !== baseDatos[id].nombre) {
-                    if (!baseDatos[id].artesanos.includes(jugSuelto)) {
-                        baseDatos[id].artesanos.push(jugSuelto);
                     }
                 }
             }
         }
     }
 
-    // 3. CONSOLIDACIÓN FINAL EN EL DICCIONARIO
+    // 3. CONSOLIDAR EN EL DICCIONARIO DEL BOT
     Object.keys(baseDatos).forEach(id => {
         const datos = baseDatos[id];
         const llave = normalizarTexto(datos.nombre);
@@ -116,13 +96,13 @@ function parsearLuaGuildCrafts(lua) {
         }
     });
 
-    // Limpieza de textos vacíos por defecto
+    // Rellenar campos que queden vacíos de forma elegante
     Object.keys(RECETAS_DB).forEach(k => {
         if (!RECETAS_DB[k].materiales) RECETAS_DB[k].materiales = "• _No se especificaron reactivos._";
         if (!RECETAS_DB[k].artesanos) RECETAS_DB[k].artesanos = "_Ningún artesano registrado._";
     });
 
-    console.log(`[Parser] Indexación completada con éxito. Total único: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación completada. Total único: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
