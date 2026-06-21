@@ -9,96 +9,73 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando mapeo indexado por IDs...");
+    console.log("[Parser] Iniciando extracción por bloques globales...");
     RECETAS_DB = {};
-
     const baseDatos = {};
-    const lineas = lua.split(/\r?\n/);
 
-    let idActual = null;
-    let modoSeccion = "buscar"; 
-
-    for (let i = 0; i < lineas.length; i++) {
-        const l = lineas[i].trim();
-        if (!l) continue;
-
-        if (l.includes('["reagents"]') || l.includes('["revent"]') || l.includes('["mat"]')) {
-            modoSeccion = "materiales";
-        } else if (l.includes('["crafters"]') || l.includes('["players"]') || l.includes('["members"]')) {
-            modoSeccion = "crafters";
+    // 1. Primera pasada: Encontrar todas las recetas y sus nombres por ID
+    const regexRecetas = /\[(\d+)\]\s*=\s*\{[^}]*\["name"\]\s*=\s*"([^"]+)"/g;
+    let match;
+    while ((match = regexRecetas.exec(lua)) !== null) {
+        const id = match[1];
+        const nombre = match[2].trim();
+        if (!nombre.includes('recipeDB')) {
+            baseDatos[id] = { nombre, materiales: [], artesanos: [] };
         }
+    }
 
-        const idMatch = l.match(/^\[(\d+)\]\s*=\s*\{/);
-        if (idMatch) {
-            idActual = idMatch[1];
-            if (!baseDatos[idActual]) {
-                baseDatos[idActual] = { nombre: null, materiales: [], artesanos: [] };
-            }
-            continue;
-        }
+    // 2. Segunda pasada: Dividir el archivo por bloques de ID para sacar materiales y artesanos de forma segura
+    const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
+    for (let i = 1; i < bloques.length; i += 2) {
+        const id = bloques[i];
+        const cuerpo = bloques[i + 1];
+        if (!cuerpo || !baseDatos[id]) continue;
 
-        if (l.startsWith('},') || l.startsWith('}')) {
-            idActual = null;
-            continue;
-        }
+        // Extraer reactivos dentro de las líneas de este bloque
+        const lineas = cuerpo.split('\n');
+        let tempMatName = null;
 
-        if (idActual) {
-            const nameMatch = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-            if (nameMatch) {
-                const nombreLimpio = nameMatch[1].trim();
-                if (!nombreLimpio.includes('recipeDB')) {
-                    baseDatos[idActual].nombre = nombreLimpio;
-                }
-                continue;
+        for (let j = 0; j < lineas.length; j++) {
+            const l = lineas[j].trim();
+            if (l.startsWith('}') && !l.includes('{')) break; // Fin del sub-bloque
+
+            const matNameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
+            if (matNameM && matNameM[1].trim() !== baseDatos[id].nombre) {
+                tempMatName = matNameM[1].trim();
             }
 
-            if (l.includes('["name"]') && (l.includes('["count"]') || l.includes('["num"]'))) {
-                const mName = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-                const mCount = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-                if (mName && mCount && baseDatos[idActual].nombre !== mName[1].trim()) {
-                    baseDatos[idActual].materiales.push(`• ${mCount[1]}x ${mName[1].trim()}`);
-                }
-                continue;
+            const matCountM = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
+            if (matCountM && tempMatName) {
+                baseDatos[id].materiales.push(`• ${matCountM[1]}x ${tempMatName}`);
+                tempMatName = null;
             }
 
-            const playerMatch = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
-            if (playerMatch) {
-                const jugador = playerMatch[1].trim();
+            // Extraer artesanos registrados (Estilo: ["Nombre"] = true o 1)
+            const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
+            if (playerM) {
+                const jug = playerM[1].trim();
                 const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon","mats"];
-                if (!filtrar.includes(jugador.toLowerCase()) && jugador !== baseDatos[idActual].nombre) {
-                    if (!baseDatos[idActual].artesanos.includes(jugador)) {
-                        baseDatos[idActual].artesanos.push(jugador);
-                    }
-                }
-                continue;
-            }
-
-            const sueltoMatch = l.match(/^"([^"]+)"\s*,?/);
-            if (sueltoMatch && (modoSeccion === "crafters" || l.length < 30)) {
-                const posibleJugador = sueltoMatch[1].trim();
-                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon"];
-                if (posibleJugador.length > 2 && isNaN(posibleJugador) && !filtrar.includes(posibleJugador.toLowerCase())) {
-                    if (!baseDatos[idActual].artesanos.includes(posibleJugador)) {
-                        baseDatos[idActual].artesanos.push(posibleJugador);
-                    }
+                if (!filtrar.includes(jug.toLowerCase()) && jug !== baseDatos[id].nombre) {
+                    if (!baseDatos[id].artesanos.includes(jug)) baseDatos[id].artesanos.push(jug);
                 }
             }
         }
     }
 
+    // 3. Consolidar en la base de datos de búsqueda del bot
     Object.keys(baseDatos).forEach(id => {
         const datos = baseDatos[id];
-        if (datos.nombre) {
-            const llave = normalizarTexto(datos.nombre);
+        const llave = normalizarTexto(datos.nombre);
+        if (llave) {
             RECETAS_DB[llave] = {
                 nombreOriginal: datos.nombre,
-                materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos._",
-                artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado._"
+                materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos en este registro._",
+                artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado en la hermandad todavía._"
             };
         }
     });
 
-    console.log(`[Parser] Indexación finalizada. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación completada con éxito. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
