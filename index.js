@@ -4,6 +4,16 @@ const { Client, LocalAuth } = pkg;
 
 let RECETAS_DB = {};
 
+// DICCIONARIO MANUAL DE SEGURIDAD (Para recetas clave que nadie tiene en inglés aún)
+const TRADUCCIONES_MANUALES = {
+    "encantar arma mangosta": "enchant weapon mongoose",
+    "enchant weapon mongoose": "encantar arma mangosta",
+    "encantar capa defensa": "enchant cloak defense",
+    "enchant cloak defense": "encantar capa defensa",
+    "formula encantar arma mangosta": "formula enchant weapon mongoose",
+    "formula enchant weapon mongoose": "formula encantar arma mangosta"
+};
+
 function normalizarTexto(t) {
     return t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").trim();
 }
@@ -13,19 +23,18 @@ function limpiarNombreArtesano(nombreCompleto) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando lectura bilingüe línea por línea...");
+    console.log("[Parser] Iniciando lectura bilingüe avanzada...");
     
     RECETAS_DB = {};
-    const baseRecetasMateriales = {}; // ID -> { nombreEs, materiales }
-    const mapaArtesanosPorNombreReceta = {}; // Nombre -> Lista de Artesanos
-    const diccionarioTraduccion = {}; // NombreEn/Alternativo -> NombreEs (Para cruzar idiomas)
+    const baseRecetasMateriales = {}; 
+    const mapaArtesanosPorNombreReceta = {}; 
+    const diccionarioTraduccion = {}; 
 
     const lineas = lua.split(/\r?\n/);
     
     let esSeccionArtesanos = false;
     let jugadorActual = null;
     
-    // Variables Fase 1
     let idRecetaActual = null;
     let nombreRecetaActual = null;
     let materiales = [];
@@ -53,9 +62,6 @@ function parsearLuaGuildCrafts(lua) {
             continue;
         }
 
-        // ==========================================
-        // FASE 1: MATERIALES (Predomina Español)
-        // ==========================================
         if (!esSeccionArtesanos) {
             const inicioRecetaM = l.match(/^\[(-?\d+)\]\s*=\s*\{/);
             if (inicioRecetaM && !l.includes('_recipeDB') && !l.includes('GuildCraftsDB')) {
@@ -110,10 +116,6 @@ function parsearLuaGuildCrafts(lua) {
                 }
             }
         } 
-        
-        // ==========================================
-        // FASE 2: ARTESANOS (Mapeo bilingüe)
-        // ==========================================
         else {
             const jugadorM = l.match(/^\["([^"]+)"\]\s*=\s*\{/) || l.match(/^"([^"]+)"\s*=\s*\{/);
             if (jugadorM && l.includes('-')) {
@@ -123,7 +125,6 @@ function parsearLuaGuildCrafts(lua) {
             }
 
             if (jugadorActual) {
-                // Buscamos la ID de la receta del personaje para saber cuál es
                 const idInternaM = l.match(/^\[(-?\d+)\]\s*=\s*\{/);
                 if (idInternaM) {
                     idRecetaActual = idInternaM[1];
@@ -135,7 +136,6 @@ function parsearLuaGuildCrafts(lua) {
                     const nombreRecetaPersonaje = nombreRecetaM[1].trim();
                     const llaveNormalizada = normalizarTexto(nombreRecetaPersonaje);
 
-                    // Si esta receta existe en nuestra base de datos de arriba, creamos un puente de idioma
                     if (baseRecetasMateriales[idRecetaActual]) {
                         const nombreEnBase = baseRecetasMateriales[idRecetaActual].nombre;
                         if (nombreEnBase !== nombreRecetaPersonaje) {
@@ -154,23 +154,19 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    // ==========================================
-    // FASE 3: CONSOLIDACIÓN DE CAMINOS DUALES
-    // ==========================================
+    // CONSOLIDACIÓN DUAL + EXTRA DE AYUDA MANUAL
     for (const id in baseRecetasMateriales) {
         const datos = baseRecetasMateriales[id];
         const llaveEs = normalizarTexto(datos.nombre);
 
         if (llaveEs) {
-            // Recolectar artesanos buscando tanto por su llave en español como por sus variantes (inglés)
             let todosLosArtesanos = [];
             
-            // Buscar artesanos que la registraron con el nombre original (español)
             if (mapaArtesanosPorNombreReceta[llaveEs]) {
                 todosLosArtesanos = todosLosArtesanos.concat(mapaArtesanosPorNombreReceta[llaveEs]);
             }
 
-            // Buscar si algún jugador la registró con el nombre en inglés
+            // Mapeo por traducciones automáticas detectadas en el LUA
             for (const llaveAlt in diccionarioTraduccion) {
                 if (diccionarioTraduccion[llaveAlt] === llaveEs) {
                     if (mapaArtesanosPorNombreReceta[llaveAlt]) {
@@ -179,6 +175,14 @@ function parsearLuaGuildCrafts(lua) {
                         });
                     }
                 }
+            }
+
+            // Mapeo por si acaso usando el diccionario manual
+            const llaveManualIngles = TRADUCCIONES_MANUALES[llaveEs];
+            if (llaveManualIngles && mapaArtesanosPorNombreReceta[llaveManualIngles]) {
+                mapaArtesanosPorNombreReceta[llaveManualIngles].forEach(art => {
+                    if (!todosLosArtesanos.includes(art)) todosLosArtesanos.push(art);
+                });
             }
 
             const artesanosLista = todosLosArtesanos.length > 0
@@ -191,20 +195,24 @@ function parsearLuaGuildCrafts(lua) {
                 artesanos: artesanosLista
             };
 
-            // CAMINO 1: Registrarla bajo el nombre en Español
+            // Indexar en español
             RECETAS_DB[llaveEs] = objetoReceta;
 
-            // CAMINO 2: Registrarla también bajo el nombre en Inglés (si se detectó uno)
+            // Indexar bajo su equivalente dinámico (LUA)
             for (const llaveAlt in diccionarioTraduccion) {
                 if (diccionarioTraduccion[llaveAlt] === llaveEs) {
-                    // Guardamos una copia exacta accesible desde el término en inglés
                     RECETAS_DB[llaveAlt] = objetoReceta; 
                 }
+            }
+
+            // Indexar bajo su equivalente estático (Diccionario Manual)
+            if (llaveManualIngles) {
+                RECETAS_DB[llaveManualIngles] = objetoReceta;
             }
         }
     }
 
-    console.log(`[Parser] Indexación bilingüe completada. Nodos de búsqueda: ${Object.keys(RECETAS_DB).length}`);
+    console.log(`[Parser] Indexación bilingüe completada con éxito.`);
 }
 
 const client = new Client({
@@ -213,7 +221,7 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
-client.on('ready', () => console.log('¡Bot Bilingüe de Profesiones Activo!'));
+client.on('ready', () => console.log('¡Bot Bilingüe Parcheado Activo!'));
 
 client.on('message_create', async (msg) => {
     if (msg.hasMedia && msg.type === 'document') {
@@ -222,7 +230,7 @@ client.on('message_create', async (msg) => {
             try {
                 const contenidoLua = Buffer.from(media.data, 'base64').toString('utf-8');
                 parsearLuaGuildCrafts(contenidoLua);
-                await msg.reply(`✅ *¡Base de datos bilingüe sincronizada!* El bot responderá ahora tanto a nombres en inglés como en español.`);
+                await msg.reply(`✅ *¡Base de datos bilingüe sincronizada!*`);
                 return;
             } catch (err) {
                 await msg.reply(`❌ Error al procesar archivo: ${err.message}`);
@@ -256,7 +264,6 @@ client.on('message_create', async (msg) => {
     const busquedaNormalizada = normalizarTexto(textoOriginal);
     let llavesEncontradas = Object.keys(RECETAS_DB).filter(k => k.includes(busquedaNormalizada));
 
-    // Eliminar duplicados estéticos si apuntan al mismo objeto exacto de receta
     let recetasUnicas = [];
     let llavesFiltradas = [];
     llavesEncontradas.forEach(k => {
