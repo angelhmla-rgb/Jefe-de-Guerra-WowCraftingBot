@@ -13,7 +13,15 @@ function parsearLuaGuildCrafts(lua) {
     RECETAS_DB = {};
     const baseDatos = {};
 
-    // 1. PRIMERA PASADA: Capturar TODOS los IDs y nombres (Sin exclusiones agresivas de tablas)
+    // Lista de palabras clave que NO son nombres de jugadores
+    const listaNegra = [
+        "name", "count", "num", "crafters", "players", "recipes", "members",
+        "id", "profession", "icon", "mats", "reagents", "itemid", "recipedb",
+        "itemlink", "rank", "level", "minlevel", "source", "skill", "orange",
+        "yellow", "green", "gray", "disabled", "favorite", "search", "filter"
+    ];
+
+    // 1. PRIMERA PASADA: Capturar IDs y nombres de recetas
     const regexNombres = /\[(\d+)\]\s*=\s*\{\s*(?:\["name"\]\s*=\s*"([^"]+)"|["']([^"']+)["'])/g;
     let match;
     while ((match = regexNombres.exec(lua)) !== null) {
@@ -50,18 +58,10 @@ function parsearLuaGuildCrafts(lua) {
                 tempMatName = null;
             }
 
-            // --- Extracción de Artesanos (Lista Negra Total de Metadatos) ---
+            // --- Extracción de Artesanos ---
             const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerM) {
                 const jug = playerM[1].trim();
-                
-                // Si la línea contiene CUALQUIERA de estas palabras del addon, NO es un jugador
-                const listaNegra = [
-                    "name", "count", "num", "crafters", "players", "recipes", "members",
-                    "id", "profession", "icon", "mats", "reagents", "itemid", "recipedb",
-                    "itemlink", "rank", "level", "minlevel", "source", "skill", "orange",
-                    "yellow", "green", "gray", "disabled", "favorite", "search", "filter"
-                ];
 
                 if (!listaNegra.includes(jug.toLowerCase()) && jug !== baseDatos[id].nombre && isNaN(jug)) {
                     if (!baseDatos[id].artesanos.includes(jug)) {
@@ -78,28 +78,43 @@ function parsearLuaGuildCrafts(lua) {
         const llave = normalizarTexto(datos.nombre);
         if (llave) {
             if (RECETAS_DB[llave]) {
+                // Fusionar materiales si el registro actual los tiene y el anterior no
                 if (datos.materiales.length > 0 && (RECETAS_DB[llave].materiales.length === 0 || RECETAS_DB[llave].materiales.includes("No se especificaron"))) {
                     RECETAS_DB[llave].materiales = datos.materiales.join("\n");
                 }
-                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ").filter(x => x && !x.includes("Ningún artesano"));
+                
+                // Fusionar artesanos aplicando la lista negra estrictamente para limpiar residuos
+                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ")
+                    .map(x => x.trim())
+                    .filter(x => x && !x.includes("Ningún artesano") && !listaNegra.includes(x.toLowerCase()));
+                
                 datos.artesanos.forEach(a => {
-                    if (!viejosArtesanos.includes(a)) viejosArtesanos.push(a);
+                    if (!listaNegra.includes(a.toLowerCase()) && !viejosArtesanos.includes(a)) {
+                        viejosArtesanos.push(a);
+                    }
                 });
-                if (viejosArtesanos.length > 0) RECETAS_DB[llave].artesanos = viejosArtesanos.join(", ");
+                
+                RECETAS_DB[llave].artesanos = viejosArtesanos.join(", ");
             } else {
+                // Filtrar la lista de artesanos antes del primer guardado
+                const artesanosLimpios = datos.artesanos.filter(a => !listaNegra.includes(a.toLowerCase()));
                 RECETAS_DB[llave] = {
                     nombreOriginal: datos.nombre,
                     materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "",
-                    artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : ""
+                    artesanos: artesanosLimpios.length > 0 ? artesanosLimpios.join(", ") : ""
                 };
             }
         }
     });
 
-    // Rellenar campos que queden vacíos de forma elegante
+    // Post-procesar para rellenar campos vacíos con estética limpia
     Object.keys(RECETAS_DB).forEach(k => {
-        if (!RECETAS_DB[k].materiales) RECETAS_DB[k].materiales = "• _No se especificaron reactivos._";
-        if (!RECETAS_DB[k].artesanos) RECETAS_DB[k].artesanos = "_Ningún artesano registrado._";
+        if (!RECETAS_DB[k].materiales || RECETAS_DB[k].materiales.trim() === "") {
+            RECETAS_DB[k].materiales = "• _No se especificaron reactivos._";
+        }
+        if (!RECETAS_DB[k].artesanos || RECETAS_DB[k].artesanos.trim() === "") {
+            RECETAS_DB[k].artesanos = "_Ningún artesano registrado._";
+        }
     });
 
     console.log(`[Parser] Indexación completada. Total único: ${Object.keys(RECETAS_DB).length} elementos.`);
