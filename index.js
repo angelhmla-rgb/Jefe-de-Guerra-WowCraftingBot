@@ -9,38 +9,54 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando extracción por bloques globales...");
+    console.log("[Parser] Iniciando extracción híbrida total...");
     RECETAS_DB = {};
     const baseDatos = {};
 
-    // 1. Primera pasada: Encontrar todas las recetas y sus nombres por ID
-    const regexRecetas = /\[(\d+)\]\s*=\s*\{[^}]*\["name"\]\s*=\s*"([^"]+)"/g;
-    let match;
-    while ((match = regexRecetas.exec(lua)) !== null) {
-        const id = match[1];
-        const nombre = match[2].trim();
-        if (!nombre.includes('recipeDB')) {
-            baseDatos[id] = { nombre, materiales: [], artesanos: [] };
-        }
-    }
-
-    // 2. Segunda pasada: Dividir el archivo por bloques de ID para sacar materiales y artesanos de forma segura
+    // 1. Dividir el archivo limpiamente por bloques numéricos [ID] = {
     const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
+    
     for (let i = 1; i < bloques.length; i += 2) {
         const id = bloques[i];
         const cuerpo = bloques[i + 1];
-        if (!cuerpo || !baseDatos[id]) continue;
+        if (!cuerpo) continue;
 
-        // Extraer reactivos dentro de las líneas de este bloque
+        // Intentar capturar el nombre de la receta (Formato 1: ["name"]="...", Formato 2: "Nombre" en la primera línea)
+        let nombreReceta = null;
+        const nameMatch = cuerpo.match(/\["name"\]\s*=\s*"([^"]+)"/);
+        
+        if (nameMatch) {
+            nombreReceta = nameMatch[1].trim();
+        } else {
+            // Formato alternativo plano: capturar el primer texto entre comillas del bloque
+            const primerTextoMatch = cuerpo.match(/^\s*"([^"]+)"/);
+            if (primerTextoMatch) {
+                nombreReceta = primerTextoMatch[1].trim();
+            }
+        }
+
+        // Si es una línea del addon de configuración o no hay nombre, la saltamos
+        if (!nombreReceta || nombreReceta.includes('recipeDB') || nombreReceta.includes('_recipeDB')) {
+            continue;
+        }
+
+        if (!baseDatos[id]) {
+            baseDatos[id] = { nombre: nombreReceta, materiales: [], artesanos: [] };
+        }
+
+        // Procesar las líneas internas de este bloque específico
         const lineas = cuerpo.split('\n');
         let tempMatName = null;
 
         for (let j = 0; j < lineas.length; j++) {
             const l = lineas[j].trim();
-            if (l.startsWith('}') && !l.includes('{')) break; // Fin del sub-bloque
+            
+            // Si el bloque se cierra, dejamos de buscar en esta receta
+            if (l.startsWith('}') && !l.includes('{')) break;
 
+            // Capturar ingredientes internos
             const matNameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-            if (matNameM && matNameM[1].trim() !== baseDatos[id].nombre) {
+            if (matNameM && matNameM[1].trim() !== nombreReceta) {
                 tempMatName = matNameM[1].trim();
             }
 
@@ -50,19 +66,21 @@ function parsearLuaGuildCrafts(lua) {
                 tempMatName = null;
             }
 
-            // Extraer artesanos registrados (Estilo: ["Nombre"] = true o 1)
+            // Capturar artesanos (Formato ["Nombre"] = true o 1)
             const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerM) {
                 const jug = playerM[1].trim();
-                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon","mats"];
-                if (!filtrar.includes(jug.toLowerCase()) && jug !== baseDatos[id].nombre) {
-                    if (!baseDatos[id].artesanos.includes(jug)) baseDatos[id].artesanos.push(jug);
+                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon","mats","reagents"];
+                if (!filtrar.includes(jug.toLowerCase()) && jug !== nombreReceta) {
+                    if (!baseDatos[id].artesanos.includes(jug)) {
+                        baseDatos[id].artesanos.push(jug);
+                    }
                 }
             }
         }
     }
 
-    // 3. Consolidar en la base de datos de búsqueda del bot
+    // 2. Consolidar en la base de datos de consulta global
     Object.keys(baseDatos).forEach(id => {
         const datos = baseDatos[id];
         const llave = normalizarTexto(datos.nombre);
@@ -75,7 +93,7 @@ function parsearLuaGuildCrafts(lua) {
         }
     });
 
-    console.log(`[Parser] Indexación completada con éxito. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación completada. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
