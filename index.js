@@ -9,7 +9,7 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando lectura secuencial masiva...");
+    console.log("[Parser] Iniciando lectura secuencial limpia...");
     RECETAS_DB = {};
     
     const lineas = lua.split(/\r?\n/);
@@ -20,7 +20,7 @@ function parsearLuaGuildCrafts(lua) {
     let tempMatName = null;
     let tempMatCount = null;
 
-    // Lista negra extendida para evitar que variables internas muten en nombres de jugadores
+    // Lista negra estricta para que NO se cuelen variables técnicas como artesanos
     const filtrarKeywords = [
         "name", "count", "num", "crafters", "players", "recipes", "id", "profession", 
         "icon", "itemid", "itemlink", "rank", "level", "minlevel", "source", "skill", 
@@ -30,8 +30,9 @@ function parsearLuaGuildCrafts(lua) {
     for (let i = 0; i < lineas.length; i++) {
         const l = lineas[i].trim();
 
-        // Detectar cambio o fin de bloque de receta
-        if (l.match(/^\[\d+\]\s*=\s*\{/) || l.startsWith('},') || l.startsWith('["professions"]')) {
+        // 1. Detectar inicio de una nueva receta [ID] = {
+        if (l.match(/^\[\d+\]\s*=\s*\{/)) {
+            // Guardamos la receta anterior si existía antes de cambiar a la nueva
             if (recetaActual) {
                 const llave = normalizarTexto(recetaActual);
                 if (llave) {
@@ -42,6 +43,7 @@ function parsearLuaGuildCrafts(lua) {
                     };
                 }
             }
+            // Reseteamos limpiamente para el nuevo bloque
             recetaActual = null;
             materiales = [];
             artesanos = [];
@@ -50,7 +52,7 @@ function parsearLuaGuildCrafts(lua) {
             continue;
         }
 
-        // 1. Obtener nombre del ítem principal
+        // 2. Obtener el nombre del ítem principal de este bloque
         const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
         if (nameM && !recetaActual) {
             const posNombre = nameM[1].trim();
@@ -60,9 +62,12 @@ function parsearLuaGuildCrafts(lua) {
             continue;
         }
 
-        // 2. Extraer materiales
+        // Si no estamos dentro de una receta válida, saltamos las líneas internas
+        if (!recetaActual) continue;
+
+        // 3. Extraer materiales (Evitando que el nombre de la receta se auto-asigne como material)
         const matNameMatch = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-        if (matNameMatch && recetaActual) {
+        if (matNameMatch) {
             const posibleMat = matNameMatch[1].trim();
             if (posibleMat !== recetaActual) {
                 tempMatName = posibleMat;
@@ -70,7 +75,7 @@ function parsearLuaGuildCrafts(lua) {
         }
 
         const matCountMatch = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-        if (matCountMatch && recetaActual) {
+        if (matCountMatch) {
             tempMatCount = matCountMatch[1];
         }
 
@@ -80,18 +85,18 @@ function parsearLuaGuildCrafts(lua) {
             tempMatCount = null;
         }
 
-        // 3. Extraer artesanos (Con filtro estricto anti-variables)
+        // 4. Extraer artesanos de forma directa (Formatos: ["Nombre"] = true o ["Nombre"] = 1)
         const playM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
-        if (playM && recetaActual) {
+        if (playM) {
             const jug = playM[1].trim();
             if (!filtrarKeywords.includes(jug.toLowerCase()) && jug !== recetaActual && isNaN(jug) && jug.length > 2) {
                 if (!artesanos.includes(jug)) artesanos.push(jug);
             }
         }
 
-        // Captura secundaria por si vienen en lista de texto plano, aplicando el mismo filtro estricto
+        // Captura secundaria para listas de artesanos en texto plano ("Nombre",)
         const crafterSimpleM = l.match(/"([^"]+)"\s*,?/);
-        if (crafterSimpleM && recetaActual && l.includes('"') && !l.includes('=')) {
+        if (crafterSimpleM && l.includes('"') && !l.includes('=')) {
             const jugSuelto = crafterSimpleM[1].trim();
             if (jugSuelto.length > 2 && isNaN(jugSuelto) && !filtrarKeywords.includes(jugSuelto.toLowerCase()) && jugSuelto !== recetaActual) {
                 if (!artesanos.includes(jugSuelto)) artesanos.push(jugSuelto);
@@ -99,7 +104,7 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    // Guardar el último residuo
+    // Guardar la última receta del archivo al salir del bucle
     if (recetaActual) {
         const llave = normalizarTexto(recetaActual);
         if (llave) {
