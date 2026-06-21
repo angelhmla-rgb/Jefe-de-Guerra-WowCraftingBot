@@ -16,21 +16,18 @@ function parsearLuaGuildCrafts(lua) {
     const lineas = lua.split(/\r?\n/);
 
     let idActual = null;
-    let modoSeccion = "buscar"; // buscar, materiales, crafters
+    let modoSeccion = "buscar"; 
 
-    // PASADA ÚNICA: Escaneo e interpretación estructural por líneas
     for (let i = 0; i < lineas.length; i++) {
         const l = lineas[i].trim();
         if (!l) continue;
 
-        // Detectar en qué sección global del addon estamos parados
         if (l.includes('["reagents"]') || l.includes('["revent"]') || l.includes('["mat"]')) {
             modoSeccion = "materiales";
         } else if (l.includes('["crafters"]') || l.includes('["players"]') || l.includes('["members"]')) {
             modoSeccion = "crafters";
         }
 
-        // Detectar si la línea abre un ID de objeto de WoW, ej: [22849] = {
         const idMatch = l.match(/^\[(\d+)\]\s*=\s*\{/);
         if (idMatch) {
             idActual = idMatch[1];
@@ -40,13 +37,11 @@ function parsearLuaGuildCrafts(lua) {
             continue;
         }
 
-        // Si se cierra un bloque numérico
         if (l.startsWith('},') || l.startsWith('}')) {
             idActual = null;
             continue;
         }
 
-        // 1. Capturar el nombre si tenemos un ID activo
         if (idActual) {
             const nameMatch = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
             if (nameMatch) {
@@ -57,7 +52,6 @@ function parsearLuaGuildCrafts(lua) {
                 continue;
             }
 
-            // 2. Si estamos dentro de un ID y vemos un nombre secundario con cantidad (Material)
             if (l.includes('["name"]') && (l.includes('["count"]') || l.includes('["num"]'))) {
                 const mName = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
                 const mCount = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
@@ -67,7 +61,6 @@ function parsearLuaGuildCrafts(lua) {
                 continue;
             }
 
-            // 3. Capturar artesanos asignados al ID activo (Ej: ["Juan"] = true)
             const playerMatch = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerMatch) {
                 const jugador = playerMatch[1].trim();
@@ -80,7 +73,6 @@ function parsearLuaGuildCrafts(lua) {
                 continue;
             }
 
-            // Captura de nombres sueltos entre comillas (Ej: "Pedro",)
             const sueltoMatch = l.match(/^"([^"]+)"\s*,?/);
             if (sueltoMatch && (modoSeccion === "crafters" || l.length < 30)) {
                 const posibleJugador = sueltoMatch[1].trim();
@@ -94,20 +86,19 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    // Convertir todo nuestro mapa de IDs indexados a la base de datos de consulta del Bot
     Object.keys(baseDatos).forEach(id => {
         const datos = baseDatos[id];
         if (datos.nombre) {
             const llave = normalizarTexto(datos.nombre);
             RECETAS_DB[llave] = {
                 nombreOriginal: datos.nombre,
-                materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos en este registro._",
-                artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado en la hermandad todavía._"
+                materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos._",
+                artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado._"
             };
         }
     });
 
-    console.log(`[Parser] Indexación finalizada. Total de elementos listos: ${Object.keys(RECETAS_DB).length}`);
+    console.log(`[Parser] Indexación finalizada. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
