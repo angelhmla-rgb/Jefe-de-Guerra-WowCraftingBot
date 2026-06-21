@@ -13,7 +13,6 @@ function parsearLuaGuildCrafts(lua) {
     RECETAS_DB = {};
     const baseDatos = {};
 
-    // 1. Dividir el archivo limpiamente por bloques numéricos [ID] = {
     const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
     
     for (let i = 1; i < bloques.length; i += 2) {
@@ -21,22 +20,19 @@ function parsearLuaGuildCrafts(lua) {
         const cuerpo = bloques[i + 1];
         if (!cuerpo) continue;
 
-        // Intentar capturar el nombre de la receta (Formato 1: ["name"]="...", Formato 2: "Nombre" en la primera línea)
         let nombreReceta = null;
         const nameMatch = cuerpo.match(/\["name"\]\s*=\s*"([^"]+)"/);
         
         if (nameMatch) {
             nombreReceta = nameMatch[1].trim();
         } else {
-            // Formato alternativo plano: capturar el primer texto entre comillas del bloque
             const primerTextoMatch = cuerpo.match(/^\s*"([^"]+)"/);
             if (primerTextoMatch) {
                 nombreReceta = primerTextoMatch[1].trim();
             }
         }
 
-        // Si es una línea del addon de configuración o no hay nombre, la saltamos
-        if (!nombreReceta || nombreReceta.includes('recipeDB') || nombreReceta.includes('_recipeDB')) {
+        if (!nombreReceta || nombreReceta.includes('recipeDB') || nombreReceta.includes('_recipeDB') || nombreReceta.length < 3) {
             continue;
         }
 
@@ -44,17 +40,13 @@ function parsearLuaGuildCrafts(lua) {
             baseDatos[id] = { nombre: nombreReceta, materiales: [], artesanos: [] };
         }
 
-        // Procesar las líneas internas de este bloque específico
         const lineas = cuerpo.split('\n');
         let tempMatName = null;
 
         for (let j = 0; j < lineas.length; j++) {
             const l = lineas[j].trim();
-            
-            // Si el bloque se cierra, dejamos de buscar en esta receta
             if (l.startsWith('}') && !l.includes('{')) break;
 
-            // Capturar ingredientes internos
             const matNameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
             if (matNameM && matNameM[1].trim() !== nombreReceta) {
                 tempMatName = matNameM[1].trim();
@@ -66,7 +58,6 @@ function parsearLuaGuildCrafts(lua) {
                 tempMatName = null;
             }
 
-            // Capturar artesanos (Formato ["Nombre"] = true o 1)
             const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerM) {
                 const jug = playerM[1].trim();
@@ -80,20 +71,33 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    // 2. Consolidar en la base de datos de consulta global
     Object.keys(baseDatos).forEach(id => {
         const datos = baseDatos[id];
         const llave = normalizarTexto(datos.nombre);
         if (llave) {
-            RECETAS_DB[llave] = {
-                nombreOriginal: datos.nombre,
-                materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos en este registro._",
-                artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado en la hermandad todavía._"
-            };
+            // Si el elemento ya existe, intentamos fusionar artesanos o materiales por si el addon repite IDs
+            if (RECETAS_DB[llave]) {
+                if (datos.materiales.length > 0 && RECETAS_DB[llave].materiales.includes("No se especificaron")) {
+                    RECETAS_DB[llave].materiales = datos.materiales.join("\n");
+                }
+                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ").filter(x => !x.includes("Ningún artesano"));
+                datos.artesanos.forEach(a => {
+                    if (!viejosArtesanos.includes(a)) viejosArtesanos.push(a);
+                });
+                if (viejosArtesanos.length > 0) {
+                    RECETAS_DB[llave].artesanos = viejosArtesanos.join(", ");
+                }
+            } else {
+                RECETAS_DB[llave] = {
+                    nombreOriginal: datos.nombre,
+                    materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos._",
+                    artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado._"
+                };
+            }
         }
     });
 
-    console.log(`[Parser] Indexación completada. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación completada. Total único: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
@@ -143,20 +147,33 @@ client.on('message_create', async (msg) => {
     }
 
     const busquedaNormalizada = normalizarTexto(textoOriginal);
+    
+    // BÚSQUEDA TOLERANTE: Encuentra si contiene la palabra clave
     let llavesEncontradas = Object.keys(RECETAS_DB).filter(k => k.includes(busquedaNormalizada));
 
+    // Si no hay coincidencias exactas ni parciales
+    if (llavesEncontradas.length === 0) {
+        await msg.reply(`❌ No encontré ningún elemento que coincida con "${textoOriginal}".`);
+        return;
+    }
+
+    // Si hay una sola coincidencia exacta o parcial, la muestra directo
     if (llavesEncontradas.length === 1) {
         const receta = RECETAS_DB[llavesEncontradas[0]];
         let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n🛠️ *Materiales:*\n${receta.materiales}\n\n👥 *Artesanos:*\n${receta.artesanos}`;
         await msg.reply(mensaje);
-    } else if (llavesEncontradas.length > 1) {
-        let mCoincide = `🔍 Opciones para "${textoOriginal}":\n\n`;
-        llavesEncontradas.slice(0, 15).forEach(k => { mCoincide += `• \`!${RECETAS_DB[k].nombreOriginal}\`\n`; });
-        if (llavesEncontradas.length > 15) mCoincide += `\n_...y ${llavesEncontradas.length - 15} más._`;
-        await msg.reply(mCoincide);
-    } else {
-        await msg.reply(`❌ No encontré "${textoOriginal}".`);
+        return;
     }
+
+    // Si hay múltiples coincidencias (Muy probable con palabras cortas como "mangosta")
+    let mCoincide = `🔍 Encontré varias opciones para "${textoOriginal}":\n\n`;
+    llavesEncontradas.slice(0, 20).forEach(k => { 
+        mCoincide += `• \`!${RECETAS_DB[k].nombreOriginal}\`\n`; 
+    });
+    if (llavesEncontradas.length > 20) {
+        mCoincide += `\n_...y ${llavesEncontradas.length - 20} opciones más. Sé más específico._`;
+    }
+    await msg.reply(mCoincide);
 });
 
 client.initialize();
