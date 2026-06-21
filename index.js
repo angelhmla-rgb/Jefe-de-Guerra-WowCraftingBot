@@ -9,7 +9,7 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando extracción híbrida total...");
+    console.log("[Parser] Iniciando extracción limpia...");
     RECETAS_DB = {};
     const baseDatos = {};
 
@@ -32,6 +32,7 @@ function parsearLuaGuildCrafts(lua) {
             }
         }
 
+        // Filtros de exclusión para no registrar basura de configuración del addon
         if (!nombreReceta || nombreReceta.includes('recipeDB') || nombreReceta.includes('_recipeDB') || nombreReceta.length < 3) {
             continue;
         }
@@ -47,6 +48,7 @@ function parsearLuaGuildCrafts(lua) {
             const l = lineas[j].trim();
             if (l.startsWith('}') && !l.includes('{')) break;
 
+            // 1. Capturar ingredientes
             const matNameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
             if (matNameM && matNameM[1].trim() !== nombreReceta) {
                 tempMatName = matNameM[1].trim();
@@ -58,11 +60,19 @@ function parsearLuaGuildCrafts(lua) {
                 tempMatName = null;
             }
 
+            // 2. Capturar Artesanos Reales (Evitando campos de datos del juego)
             const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerM) {
                 const jug = playerM[1].trim();
-                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon","mats","reagents"];
-                if (!filtrar.includes(jug.toLowerCase()) && jug !== nombreReceta) {
+                
+                // Lista negra ampliada con "itemid", "link", etc.
+                const filtrar = [
+                    "name", "count", "num", "crafters", "players", "recipes", 
+                    "id", "profession", "icon", "mats", "reagents", "itemid", 
+                    "itemlink", "rank", "level", "minlevel", "source"
+                ];
+
+                if (!filtrar.includes(jug.toLowerCase()) && jug !== nombreReceta && isNaN(jug)) {
                     if (!baseDatos[id].artesanos.includes(jug)) {
                         baseDatos[id].artesanos.push(jug);
                     }
@@ -71,16 +81,17 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
+    // Consolidar y fusionar duplicados de IDs cruzados
     Object.keys(baseDatos).forEach(id => {
         const datos = baseDatos[id];
         const llave = normalizarTexto(datos.nombre);
         if (llave) {
-            // Si el elemento ya existe, intentamos fusionar artesanos o materiales por si el addon repite IDs
+            // Si ya existe la receta de otra sección del archivo, unificamos los materiales/artesanos válidos
             if (RECETAS_DB[llave]) {
-                if (datos.materiales.length > 0 && RECETAS_DB[llave].materiales.includes("No se especificaron")) {
+                if (datos.materiales.length > 0 && (RECETAS_DB[llave].materiales.includes("No se especificaron") || RECETAS_DB[llave].materiales.length === 0)) {
                     RECETAS_DB[llave].materiales = datos.materiales.join("\n");
                 }
-                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ").filter(x => !x.includes("Ningún artesano"));
+                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ").filter(x => !x.includes("Ningún artesano") && x !== "");
                 datos.artesanos.forEach(a => {
                     if (!viejosArtesanos.includes(a)) viejosArtesanos.push(a);
                 });
@@ -90,11 +101,17 @@ function parsearLuaGuildCrafts(lua) {
             } else {
                 RECETAS_DB[llave] = {
                     nombreOriginal: datos.nombre,
-                    materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos._",
-                    artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado._"
+                    materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "",
+                    artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : ""
                 };
             }
         }
+    });
+
+    // Post-procesado para limpiar textos vacíos
+    Object.keys(RECETAS_DB).forEach(k => {
+        if (!RECETAS_DB[k].materiales) RECETAS_DB[k].materiales = "• _No se especificaron reactivos._";
+        if (!RECETAS_DB[k].artesanos) RECETAS_DB[k].artesanos = "_Ningún artesano registrado._";
     });
 
     console.log(`[Parser] Indexación completada. Total único: ${Object.keys(RECETAS_DB).length} elementos.`);
@@ -147,17 +164,13 @@ client.on('message_create', async (msg) => {
     }
 
     const busquedaNormalizada = normalizarTexto(textoOriginal);
-    
-    // BÚSQUEDA TOLERANTE: Encuentra si contiene la palabra clave
     let llavesEncontradas = Object.keys(RECETAS_DB).filter(k => k.includes(busquedaNormalizada));
 
-    // Si no hay coincidencias exactas ni parciales
     if (llavesEncontradas.length === 0) {
         await msg.reply(`❌ No encontré ningún elemento que coincida con "${textoOriginal}".`);
         return;
     }
 
-    // Si hay una sola coincidencia exacta o parcial, la muestra directo
     if (llavesEncontradas.length === 1) {
         const receta = RECETAS_DB[llavesEncontradas[0]];
         let mensaje = `📜 *Receta: ${receta.nombreOriginal}* 📜\n\n🛠️ *Materiales:*\n${receta.materiales}\n\n👥 *Artesanos:*\n${receta.artesanos}`;
@@ -165,13 +178,12 @@ client.on('message_create', async (msg) => {
         return;
     }
 
-    // Si hay múltiples coincidencias (Muy probable con palabras cortas como "mangosta")
     let mCoincide = `🔍 Encontré varias opciones para "${textoOriginal}":\n\n`;
     llavesEncontradas.slice(0, 20).forEach(k => { 
         mCoincide += `• \`!${RECETAS_DB[k].nombreOriginal}\`\n`; 
     });
     if (llavesEncontradas.length > 20) {
-        mCoincide += `\n_...y ${llavesEncontradas.length - 20} opciones más. Sé más específico._`;
+        mCoincide += `\n_...y ${llavesEncontradas.length - 20} opciones más._`;
     }
     await msg.reply(mCoincide);
 });
