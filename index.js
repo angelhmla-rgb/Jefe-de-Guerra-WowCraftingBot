@@ -9,105 +9,105 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando lectura optimizada de GuildCrafts...");
+    console.log("[Parser] Iniciando mapeo indexado por IDs...");
     RECETAS_DB = {};
-    
-    const lineas = lua.split(/\r?\n/);
-    let recetaActual = null;
-    let materiales = [];
-    let artesanos = [];
-    
-    let tempMatName = null;
-    let tempMatCount = null;
 
+    const baseDatos = {};
+    const lineas = lua.split(/\r?\n/);
+
+    let idActual = null;
+    let modoSeccion = "buscar"; // buscar, materiales, crafters
+
+    // PASADA ÚNICA: Escaneo e interpretación estructural por líneas
     for (let i = 0; i < lineas.length; i++) {
         const l = lineas[i].trim();
+        if (!l) continue;
 
-        // Detectar cambio o fin de bloque de receta
-        if (l.match(/^\[\d+\]\s*=\s*\{/) || l.startsWith('},') || l.startsWith('["professions"]')) {
-            if (recetaActual) {
-                const llave = normalizarTexto(recetaActual);
-                if (llave) {
-                    RECETAS_DB[llave] = {
-                        nombreOriginal: recetaActual,
-                        materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se especificaron reactivos._",
-                        artesanos: artesanos.length > 0 ? artesanos.join(", ") : "_Ningún artesano registrado._"
-                    };
+        // Detectar en qué sección global del addon estamos parados
+        if (l.includes('["reagents"]') || l.includes('["revent"]') || l.includes('["mat"]')) {
+            modoSeccion = "materiales";
+        } else if (l.includes('["crafters"]') || l.includes('["players"]') || l.includes('["members"]')) {
+            modoSeccion = "crafters";
+        }
+
+        // Detectar si la línea abre un ID de objeto de WoW, ej: [22849] = {
+        const idMatch = l.match(/^\[(\d+)\]\s*=\s*\{/);
+        if (idMatch) {
+            idActual = idMatch[1];
+            if (!baseDatos[idActual]) {
+                baseDatos[idActual] = { nombre: null, materiales: [], artesanos: [] };
+            }
+            continue;
+        }
+
+        // Si se cierra un bloque numérico
+        if (l.startsWith('},') || l.startsWith('}')) {
+            idActual = null;
+            continue;
+        }
+
+        // 1. Capturar el nombre si tenemos un ID activo
+        if (idActual) {
+            const nameMatch = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
+            if (nameMatch) {
+                const nombreLimpio = nameMatch[1].trim();
+                if (!nombreLimpio.includes('recipeDB')) {
+                    baseDatos[idActual].nombre = nombreLimpio;
+                }
+                continue;
+            }
+
+            // 2. Si estamos dentro de un ID y vemos un nombre secundario con cantidad (Material)
+            if (l.includes('["name"]') && (l.includes('["count"]') || l.includes('["num"]'))) {
+                const mName = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
+                const mCount = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
+                if (mName && mCount && baseDatos[idActual].nombre !== mName[1].trim()) {
+                    baseDatos[idActual].materiales.push(`• ${mCount[1]}x ${mName[1].trim()}`);
+                }
+                continue;
+            }
+
+            // 3. Capturar artesanos asignados al ID activo (Ej: ["Juan"] = true)
+            const playerMatch = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
+            if (playerMatch) {
+                const jugador = playerMatch[1].trim();
+                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon","mats"];
+                if (!filtrar.includes(jugador.toLowerCase()) && jugador !== baseDatos[idActual].nombre) {
+                    if (!baseDatos[idActual].artesanos.includes(jugador)) {
+                        baseDatos[idActual].artesanos.push(jugador);
+                    }
+                }
+                continue;
+            }
+
+            // Captura de nombres sueltos entre comillas (Ej: "Pedro",)
+            const sueltoMatch = l.match(/^"([^"]+)"\s*,?/);
+            if (sueltoMatch && (modoSeccion === "crafters" || l.length < 30)) {
+                const posibleJugador = sueltoMatch[1].trim();
+                const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon"];
+                if (posibleJugador.length > 2 && isNaN(posibleJugador) && !filtrar.includes(posibleJugador.toLowerCase())) {
+                    if (!baseDatos[idActual].artesanos.includes(posibleJugador)) {
+                        baseDatos[idActual].artesanos.push(posibleJugador);
+                    }
                 }
             }
-            recetaActual = null;
-            materiales = [];
-            artesanos = [];
-            tempMatName = null;
-            tempMatCount = null;
-            continue;
-        }
-
-        // 1. Obtener nombre del ítem principal
-        const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-        if (nameM && !recetaActual) {
-            const posNombre = nameM[1].trim();
-            if (!posNombre.includes('recipeDB')) {
-                recetaActual = posNombre;
-            }
-            continue;
-        }
-
-        // 2. Extraer materiales de forma flexible (en cualquier orden de líneas)
-        const matNameMatch = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-        if (matNameMatch && recetaActual) {
-            const posibleMat = matNameMatch[1].trim();
-            if (posibleMat !== recetaActual) {
-                tempMatName = posibleMat;
-            }
-        }
-
-        const matCountMatch = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-        if (matCountMatch && recetaActual) {
-            tempMatCount = matCountMatch[1];
-        }
-
-        // Si en este bloque de líneas logramos juntar el nombre de un ingrediente y su cantidad, lo guardamos
-        if (tempMatName && tempMatCount) {
-            materiales.push(`• ${tempMatCount}x ${tempMatName}`);
-            tempMatName = null;
-            tempMatCount = null;
-        }
-
-        // 3. Extraer artesanos (Captura cualquier nombre entre llaves o asignado como true/1)
-        const playM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
-        if (playM && recetaActual) {
-            const jug = playM[1].trim();
-            const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon"];
-            if (!filtrar.includes(jug.toLowerCase()) && jug !== recetaActual) {
-                if (!artesanos.includes(jug)) artesanos.push(jug);
-            }
-        }
-
-        // Captura secundaria por si los artesanos vienen listados en texto plano "Nombre",
-        const crafterSimpleM = l.match(/"([^"]+)"\s*,?/);
-        if (crafterSimpleM && recetaActual && l.includes('"') && !l.includes('=')) {
-            const jugSuelto = crafterSimpleM[1].trim();
-            const filtrar = ["name","count","num","crafters","players","recipes","id","profession","icon"];
-            if (jugSuelto.length > 2 && isNaN(jugSuelto) && !filtrar.includes(jugSuelto.toLowerCase()) && jugSuelto !== recetaActual) {
-                if (!artesanos.includes(jugSuelto)) artesanos.push(jugSuelto);
-            }
         }
     }
 
-    // Guardar el último residuo del archivo
-    if (recetaActual) {
-        const llave = normalizarTexto(recetaActual);
-        if (llave) {
+    // Convertir todo nuestro mapa de IDs indexados a la base de datos de consulta del Bot
+    Object.keys(baseDatos).forEach(id => {
+        const datos = baseDatos[id];
+        if (datos.nombre) {
+            const llave = normalizarTexto(datos.nombre);
             RECETAS_DB[llave] = {
-                nombreOriginal: recetaActual,
-                materiales: materiales.length > 0 ? materiales.join("\n") : "• _No se especificaron reactivos._",
-                artesanos: artesanos.length > 0 ? artesanos.join(", ") : "_Ningún artesano registrado._"
+                nombreOriginal: datos.nombre,
+                materiales: datos.materiales.length > 0 ? datos.materiales.join("\n") : "• _No se especificaron reactivos en este registro._",
+                artesanos: datos.artesanos.length > 0 ? datos.artesanos.join(", ") : "_Ningún artesano registrado en la hermandad todavía._"
             };
         }
-    }
+    });
 
-    console.log(`[Parser] Indexación exitosa. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación finalizada. Total de elementos listos: ${Object.keys(RECETAS_DB).length}`);
 }
 
 const client = new Client({
