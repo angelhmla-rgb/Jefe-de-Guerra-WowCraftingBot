@@ -9,48 +9,38 @@ function normalizarTexto(t) {
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando extracción limpia...");
+    console.log("[Parser] Iniciando extracción relacional por doble pasada...");
     RECETAS_DB = {};
     const baseDatos = {};
 
+    // 1. PRIMERA PASADA: Mapear de golpe todos los IDs y nombres de recetas del archivo completo
+    const regexNombres = /\[(\d+)\]\s*=\s*\{\s*(?:\["name"\]\s*=\s*"([^"]+)"|["']([^"']+)["'])/g;
+    let match;
+    while ((match = regexNombres.exec(lua)) !== null) {
+        const id = match[1];
+        const nombre = (match[2] || match[3]).trim();
+        if (nombre && !nombre.includes('recipeDB') && !nombre.includes('_recipeDB') && nombre.length > 2) {
+            baseDatos[id] = { nombre: nombre, materiales: [], artesanos: [] };
+        }
+    }
+
+    // 2. SEGUNDA PASADA: Escaneo por bloques para inyectar reactivos y artesanos en el ID correcto
     const bloques = lua.split(/\[(\d+)\]\s*=\s*\{/);
-    
     for (let i = 1; i < bloques.length; i += 2) {
         const id = bloques[i];
         const cuerpo = bloques[i + 1];
-        if (!cuerpo) continue;
-
-        let nombreReceta = null;
-        const nameMatch = cuerpo.match(/\["name"\]\s*=\s*"([^"]+)"/);
-        
-        if (nameMatch) {
-            nombreReceta = nameMatch[1].trim();
-        } else {
-            const primerTextoMatch = cuerpo.match(/^\s*"([^"]+)"/);
-            if (primerTextoMatch) {
-                nombreReceta = primerTextoMatch[1].trim();
-            }
-        }
-
-        // Filtros de exclusión para no registrar basura de configuración del addon
-        if (!nombreReceta || nombreReceta.includes('recipeDB') || nombreReceta.includes('_recipeDB') || nombreReceta.length < 3) {
-            continue;
-        }
-
-        if (!baseDatos[id]) {
-            baseDatos[id] = { nombre: nombreReceta, materiales: [], artesanos: [] };
-        }
+        if (!cuerpo || !baseDatos[id]) continue;
 
         const lineas = cuerpo.split('\n');
         let tempMatName = null;
 
         for (let j = 0; j < lineas.length; j++) {
             const l = lineas[j].trim();
-            if (l.startsWith('}') && !l.includes('{')) break;
+            if (l.startsWith('}') && !l.includes('{')) break; // Fin del bloque
 
-            // 1. Capturar ingredientes
+            // Capturar materiales internos (por su nombre y cantidad)
             const matNameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-            if (matNameM && matNameM[1].trim() !== nombreReceta) {
+            if (matNameM && matNameM[1].trim() !== baseDatos[id].nombre) {
                 tempMatName = matNameM[1].trim();
             }
 
@@ -60,19 +50,17 @@ function parsearLuaGuildCrafts(lua) {
                 tempMatName = null;
             }
 
-            // 2. Capturar Artesanos Reales (Evitando campos de datos del juego)
+            // Capturar artesanos (Evitando propiedades como itemid o links)
             const playerM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playerM) {
                 const jug = playerM[1].trim();
-                
-                // Lista negra ampliada con "itemid", "link", etc.
                 const filtrar = [
                     "name", "count", "num", "crafters", "players", "recipes", 
                     "id", "profession", "icon", "mats", "reagents", "itemid", 
                     "itemlink", "rank", "level", "minlevel", "source"
                 ];
 
-                if (!filtrar.includes(jug.toLowerCase()) && jug !== nombreReceta && isNaN(jug)) {
+                if (!filtrar.includes(jug.toLowerCase()) && jug !== baseDatos[id].nombre && isNaN(jug)) {
                     if (!baseDatos[id].artesanos.includes(jug)) {
                         baseDatos[id].artesanos.push(jug);
                     }
@@ -81,23 +69,21 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    // Consolidar y fusionar duplicados de IDs cruzados
+    // 3. Consolidación limpia en el diccionario del bot
     Object.keys(baseDatos).forEach(id => {
         const datos = baseDatos[id];
         const llave = normalizarTexto(datos.nombre);
         if (llave) {
-            // Si ya existe la receta de otra sección del archivo, unificamos los materiales/artesanos válidos
+            // Si el elemento ya existe (duplicado por facción o profesión), unificamos materiales y artesanos
             if (RECETAS_DB[llave]) {
-                if (datos.materiales.length > 0 && (RECETAS_DB[llave].materiales.includes("No se especificaron") || RECETAS_DB[llave].materiales.length === 0)) {
+                if (datos.materiales.length > 0 && (RECETAS_DB[llave].materiales.length === 0 || RECETAS_DB[llave].materiales.includes("No se especificaron"))) {
                     RECETAS_DB[llave].materiales = datos.materiales.join("\n");
                 }
-                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ").filter(x => !x.includes("Ningún artesano") && x !== "");
+                const viejosArtesanos = RECETAS_DB[llave].artesanos.split(", ").filter(x => x && !x.includes("Ningún artesano"));
                 datos.artesanos.forEach(a => {
                     if (!viejosArtesanos.includes(a)) viejosArtesanos.push(a);
                 });
-                if (viejosArtesanos.length > 0) {
-                    RECETAS_DB[llave].artesanos = viejosArtesanos.join(", ");
-                }
+                if (viejosArtesanos.length > 0) RECETAS_DB[llave].artesanos = viejosArtesanos.join(", ");
             } else {
                 RECETAS_DB[llave] = {
                     nombreOriginal: datos.nombre,
@@ -108,13 +94,13 @@ function parsearLuaGuildCrafts(lua) {
         }
     });
 
-    // Post-procesado para limpiar textos vacíos
+    // Formatear respuestas finales por defecto si quedaron vacías
     Object.keys(RECETAS_DB).forEach(k => {
         if (!RECETAS_DB[k].materiales) RECETAS_DB[k].materiales = "• _No se especificaron reactivos._";
         if (!RECETAS_DB[k].artesanos) RECETAS_DB[k].artesanos = "_Ningún artesano registrado._";
     });
 
-    console.log(`[Parser] Indexación completada. Total único: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación completada con éxito. Total único: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
