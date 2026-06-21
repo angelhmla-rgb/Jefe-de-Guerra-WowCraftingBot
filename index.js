@@ -9,22 +9,17 @@ function normalizarTexto(t) {
 }
 
 function limpiarNombreArtesano(nombre) {
-    // Elimina el sufijo del servidor "- Dreamscythe" o similares si vienen pegados al personaje
     return nombre.split('-')[0].trim();
 }
 
 function parsearLuaGuildCrafts(lua) {
-    console.log("[Parser] Iniciando lectura secuencial inteligente...");
+    console.log("[Parser] Iniciando lectura masiva optimizada...");
     RECETAS_DB = {};
     
     const lineas = lua.split(/\r?\n/);
-    
     let recetaActual = null;
     let materiales = [];
     let artesanos = [];
-    
-    let dentroDeReagents = false;
-    let dentroDeUnReagent = false;
     
     let tempMatName = null;
     let tempMatCount = null;
@@ -39,12 +34,12 @@ function parsearLuaGuildCrafts(lua) {
     for (let i = 0; i < lineas.length; i++) {
         const l = lineas[i].trim();
 
-        // Si la línea es parte de la configuración final de tus personajes (ej: = "Default"), la ignoramos por completo
-        if (l.includes('["') && l.includes('="Default"') || l.includes('=\s*"Default"')) {
+        // Ignorar la lista de personajes del usuario al final del archivo
+        if (l.includes('="Default"') || l.includes('=\s*"Default"')) {
             continue;
         }
 
-        // 1. Detectar inicio de una receta principal: [ID] = {
+        // 1. Detectar el inicio de CUALQUIER receta (IDs positivas o negativas)
         if (l.match(/^\[-?\d+\]\s*=\s*\{/) && !l.includes('_recipeDB')) {
             if (recetaActual) {
                 const llave = normalizarTexto(recetaActual);
@@ -59,60 +54,47 @@ function parsearLuaGuildCrafts(lua) {
             recetaActual = null;
             materiales = [];
             artesanos = [];
-            dentroDeReagents = false;
-            dentroDeUnReagent = false;
             tempMatName = null;
             tempMatCount = null;
             continue;
         }
 
-        // 2. Control de sub-bloques de Reactivos
-        if (l.startsWith('["reagents"]')) {
-            dentroDeReagents = true;
-            continue;
-        }
-        if (dentroDeReagents && l.startsWith('{')) {
-            dentroDeUnReagent = true;
-            continue;
-        }
-        if (dentroDeUnReagent && (l.startsWith('},') || l.startsWith('}'))) {
-            if (tempMatName && tempMatCount) {
-                materiales.push(`• ${tempMatCount}x ${tempMatName}`);
-            }
-            tempMatName = null;
-            tempMatCount = null;
-            dentroDeUnReagent = false;
-            continue;
-        }
-        if (dentroDeReagents && (l.startsWith('},') || l.startsWith('}'))) {
-            dentroDeReagents = false;
-            continue;
-        }
-
-        // 3. Captura de nombres (Receta vs Material)
-        const nameM = l.match(/\["name"\]\s*=\s*"([^"]+)"/);
-        if (nameM) {
-            const valorNombre = nameM[1].trim();
-            if (dentroDeUnReagent) {
-                tempMatName = valorNombre;
-            } else if (!recetaActual) {
-                if (!valorNombre.includes('recipeDB')) {
-                    recetaActual = valorNombre;
+        // 2. Si ya encontramos el inicio de un bloque, extraemos la información línea por línea
+        if (l.includes('["name"]') || l.includes('"name"')) {
+            const nameM = l.match(/["']name["']\s*=\s*"([^"]+)"/);
+            if (nameM) {
+                const valorNombre = nameM[1].trim();
+                
+                if (!recetaActual) {
+                    // Si no tenemos receta asignada aún, este primer "name" es el título de la receta
+                    if (!valorNombre.includes('recipeDB')) {
+                        recetaActual = valorNombre;
+                    }
+                } else {
+                    // Si ya hay una receta activa, cualquier otro "name" subsecuente es un ingrediente
+                    if (valorNombre !== recetaActual) {
+                        tempMatName = valorNombre;
+                    }
                 }
             }
-            continue;
         }
 
-        // Cantidad de materiales
-        const countM = l.match(/(?:\["count"\]|\["num"\])\s*=\s*(\d+)/);
-        if (countM && dentroDeUnReagent) {
+        // Capturar cantidades de ingredientes (acepta count o num)
+        const countM = l.match(/(?:["']count["']|["']num["'])\s*=\s*(\d+)/);
+        if (countM && recetaActual) {
             tempMatCount = countM[1];
-            continue;
         }
 
-        // 4. Extracción selectiva de Artesanos Reales dentro de la receta
-        if (recetaActual && !dentroDeReagents) {
-            // Formato standard: ["NombreJugador"] = true o ["NombreJugador-Dreamscythe"] = true
+        // Si logramos juntar el nombre del material y su cantidad, lo guardamos inmediatamente
+        if (tempMatName && tempMatCount) {
+            materiales.push(`• ${tempMatCount}x ${tempMatName}`);
+            tempMatName = null;
+            tempMatCount = null;
+        }
+
+        // 3. Captura de artesanos reales asignados a la receta
+        if (recetaActual) {
+            // Formato estándar: ["Nombre"] = true o ["Nombre-Server"] = true
             const playM = l.match(/\["([^"]+)"\]\s*=\s*(?:true|1)/);
             if (playM) {
                 let jug = limpiarNombreArtesano(playM[1]);
@@ -122,7 +104,7 @@ function parsearLuaGuildCrafts(lua) {
                 continue;
             }
 
-            // Formato alternativo de lista de artesanos en texto plano: "Nombre", o "Nombre-Dreamscythe",
+            // Formato secundario (texto plano): "Nombre",
             const crafterSimpleM = l.match(/"([^"]+)"\s*,?/);
             if (crafterSimpleM && l.includes('"') && !l.includes('=')) {
                 let jugSuelto = limpiarNombreArtesano(crafterSimpleM[1]);
@@ -133,7 +115,7 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    // Guardar última receta procesada
+    // Guardar el último residuo del bucle
     if (recetaActual) {
         const llave = normalizarTexto(recetaActual);
         if (llave) {
@@ -145,7 +127,7 @@ function parsearLuaGuildCrafts(lua) {
         }
     }
 
-    console.log(`[Parser] Indexación completada con éxito. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
+    console.log(`[Parser] Indexación masiva completada. Total: ${Object.keys(RECETAS_DB).length} elementos.`);
 }
 
 const client = new Client({
